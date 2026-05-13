@@ -259,3 +259,9 @@ code, pre, kbd, samp {
   0%, 100% { opacity: 1;    }
   50%       { opacity: 0.92; }
 }
+
+@keyframes consensus-glow {
+  from { box-shadow: 0 0  6px 1px #00f2ff44, inset 0 0  4px 0 #00f2ff11; }
+  to   { box-shadow: 0 0 20px 4px #00f2ff99, inset 0 0 12px 0 #00f2ff22; }
+}
+

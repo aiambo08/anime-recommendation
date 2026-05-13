@@ -50,6 +50,24 @@ export function NexusHeader() {
           ))}
         </div>
 
+        {/* Nav */}
+        <nav className="flex items-center gap-1">
+          <a
+            href="/"
+            className="btn-neon knn px-3 py-1 text-2xs"
+            style={{ fontSize: "0.6rem" }}
+          >
+            HOME
+          </a>
+          <a
+            href="/dashboard"
+            className="btn-neon ncf px-3 py-1 text-2xs"
+            style={{ fontSize: "0.6rem" }}
+          >
+            DASHBOARD
+          </a>
+        </nav>
+
         <div className="ml-auto flex items-center gap-4">
           {/* Dataset status */}
           <div className="flex items-center gap-3">

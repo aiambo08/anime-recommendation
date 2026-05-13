@@ -95,9 +95,9 @@ export default function HomePage() {
             </p>
 
             <div className="mt-8 flex items-center gap-4">
-              <button className="btn-neon knn flex items-center gap-2">
+              <a href="/dashboard" className="btn-neon knn flex items-center gap-2">
                 BEGIN ANALYSIS <ArrowRight size={14} />
-              </button>
+              </a>
               <span className="nt-label">OR DROP CSV FILES BELOW</span>
             </div>
           </motion.section>
