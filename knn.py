@@ -200,35 +200,35 @@ def generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file='result
     print(f"✅ Resultados KNN exportados correctamente al frontend en {output_file}")
 
 
-def run_knn(df_train, df_test, k_values=[5, 10, 20, 30, 50], sim_metric='jmsd', results_file='results/resultados_k_optimo.csv'):
+def run_knn(df_train, df_test, k_values=[5, 10, 20, 30, 50], sim_metric='jmsd', results_file='results/resultados_k_optimo.csv', force_recompute=False):
     # Crear la carpeta de resultados si no existe
     os.makedirs(os.path.dirname(results_file), exist_ok=True)
     
-    # Si detecta que no generamos los resultados KNN del front, forzamos su generación
+    # Generar resultados para el frontend si no existen
     frontend_file = 'results/resultados_knn.csv'
     if not os.path.exists(frontend_file):
         generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file=frontend_file)
 
-    if os.path.exists(results_file):
-        print(f"Cargando resultados de K guardados previamente desde {results_file}...")
-        df_results = pd.read_csv(results_file)
-        print(df_results)
-        
-        # Aunque carguemos resultados, instanciamos el modelo para retornarlo y hacer predicciones luego
-        print(">> Inicializando modelo KNN (sin revaluar)...")
-        knn = KNNRecommender(df_train)
-        return df_results, knn
-
     print(">> Inicializando modelo KNN...")
     knn = KNNRecommender(df_train)
-    
-    print("Calculando KNN para diferentes valores de K (esto puede tardar)...")
-    results = []
-    
-    # En el notebook usabas una muestra de 2000 registros para agilizar la búsqueda:
-    # df_test_sample = df_test.sample(2000, random_state=42) si len(df_test) > 2000 else df_test
+
+    # Si existe el archivo y NO forzamos recalcular, leemos de disco
+    if os.path.exists(results_file) and not force_recompute:
+        print(f"Cargando resultados de K guardados previamente desde {results_file}...")
+        df_results = pd.read_csv(results_file)
+        
+        # Extraemos automáticamente el mejor K basado en el menor RMSE
+        best_k = int(df_results.loc[df_results['RMSE'].idxmin(), 'K'])
+        print(f">> Generando predicciones de muestra para el mejor K (k = {best_k}) a partir del test...")
+        
+        # Evaluamos rápidamente el test sample solo con el best_k para obtener la muestra de predicciones
+        _, _, _, best_df_preds = knn.evaluate(df_test, best_k, sim_metric)
+        
+        return df_results, knn, best_k, best_df_preds
+
+    # Si no existe el archivo o forzamos recalcular
     print(f">> Evaluando KNN con métrica: {sim_metric}")
-    
+    results = []
     best_k = None
     best_df_preds = None
     best_rmse = float('inf')
@@ -252,11 +252,7 @@ def run_knn(df_train, df_test, k_values=[5, 10, 20, 30, 50], sim_metric='jmsd', 
     df_results.to_csv(results_file, index=False)
     print(f"Resultados guardados de búsqueda en '{results_file}'")
     
-    print(f"\nEjemplo de Predicciones del mejor KNN (K = {best_k}):")
-    if best_df_preds is not None and not best_df_preds.empty:
-        print(best_df_preds.head(10))
-    
-    return df_results, knn
+    return df_results, knn, best_k, best_df_preds
 
 if __name__ == "__main__":
     pass
