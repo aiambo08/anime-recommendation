@@ -1,6 +1,7 @@
 import math
 import numpy as np
 import pandas as pd
+import os
 
 class KNNRecommender:
     def __init__(self, df_train):
@@ -106,6 +107,8 @@ class KNNRecommender:
 
     def evaluate(self, test_df, k, sim_metric='jmsd'):
         errores_cuadraticos = []
+        errores_absolutos = []
+        predicciones_log = []
         no_predecibles = 0
         total_test = len(test_df)
         
@@ -120,27 +123,140 @@ class KNNRecommender:
                 no_predecibles += 1
             else:
                 errores_cuadraticos.append((prediccion - rating_real) ** 2)
+                errores_absolutos.append(abs(prediccion - rating_real))
+                predicciones_log.append({
+                    'user_id': u,
+                    'anime_id': i,
+                    'rating_real': rating_real,
+                    'rating_predicho': round(prediccion, 2)
+                })
                 
         if len(errores_cuadraticos) == 0:
-            return float('inf'), 0.0
+            return float('inf'), float('inf'), 0.0, pd.DataFrame()
             
         rmse = math.sqrt(sum(errores_cuadraticos) / len(errores_cuadraticos))
+        mae = sum(errores_absolutos) / len(errores_absolutos)
         cobertura = (total_test - no_predecibles) / total_test * 100
-        return rmse, cobertura
+        
+        df_preds = pd.DataFrame(predicciones_log)
+        return rmse, mae, cobertura, df_preds
 
 
-def run_knn(df_train, df_test, k_values=[5, 10, 20], sim_metric='jmsd'):
+def generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file='results/resultados_knn.csv'):
+    """
+    Genera un archivo CSV con las relaciones Source-Target a partir de un modelo KNN 
+    para ser visualizadas en el frontend (anime-nexus). Basado en sklearn NearestNeighbors.
+    """
+    from sklearn.neighbors import NearestNeighbors
+    from scipy.sparse import csr_matrix
+    
+    print(">> Generando métricas KNN Item-Item con sklearn para frontend...")
+    
+    # Crear mappear de IDs a índices
+    user_ids = df_train['user_id'].unique()
+    anime_ids = df_train['anime_id'].unique()
+    
+    user2idx = {u: idx for idx, u in enumerate(user_ids)}
+    anime2idx = {a: idx for idx, a in enumerate(anime_ids)}
+    idx2anime = {idx: a for a, idx in anime2idx.items()}
+    
+    NUM_USERS = len(user2idx)
+    NUM_ITEMS = len(anime2idx)
+    
+    row_idx = df_train['user_id'].map(user2idx).values
+    col_idx = df_train['anime_id'].map(anime2idx).values
+    
+    # Matriz User-Item
+    matrix_user_item = csr_matrix(
+        (df_train['rating'].values.astype('float32'), (row_idx, col_idx)),
+        shape=(NUM_USERS, NUM_ITEMS)
+    )
+    
+    item_item_matrix = matrix_user_item.transpose()
+    knn_model = NearestNeighbors(metric='cosine', algorithm='brute')
+    knn_model.fit(item_item_matrix)
+    
+    distances, indices = knn_model.kneighbors(item_item_matrix, n_neighbors=n_neighbors)
+    
+    resultados = []
+    for i in range(len(idx2anime)):
+        source_anime = idx2anime[i]
+        
+        for j in range(1, len(indices[i])):
+            target_anime = idx2anime[indices[i][j]]
+            distancia = distances[i][j]
+            similitud = 1 - distancia if distancia <= 1 else 1 / (1 + distancia)
+            
+            resultados.append({
+                'source': source_anime,
+                'target': target_anime,
+                'distance': distancia,
+                'similarity': similitud,
+                'rank': j
+            })
+            
+    df_knn_results = pd.DataFrame(resultados)
+    df_knn_results.to_csv(output_file, index=False)
+    print(f"✅ Resultados KNN exportados correctamente al frontend en {output_file}")
+
+
+def run_knn(df_train, df_test, k_values=[5, 10, 20, 30, 50], sim_metric='jmsd', results_file='results/resultados_k_optimo.csv'):
+    # Crear la carpeta de resultados si no existe
+    os.makedirs(os.path.dirname(results_file), exist_ok=True)
+    
+    # Si detecta que no generamos los resultados KNN del front, forzamos su generación
+    frontend_file = 'results/resultados_knn.csv'
+    if not os.path.exists(frontend_file):
+        generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file=frontend_file)
+
+    if os.path.exists(results_file):
+        print(f"Cargando resultados de K guardados previamente desde {results_file}...")
+        df_results = pd.read_csv(results_file)
+        print(df_results)
+        
+        # Aunque carguemos resultados, instanciamos el modelo para retornarlo y hacer predicciones luego
+        print(">> Inicializando modelo KNN (sin revaluar)...")
+        knn = KNNRecommender(df_train)
+        return df_results, knn
+
     print(">> Inicializando modelo KNN...")
     knn = KNNRecommender(df_train)
     
+    print("Calculando KNN para diferentes valores de K (esto puede tardar)...")
     results = []
+    
+    # En el notebook usabas una muestra de 2000 registros para agilizar la búsqueda:
+    # df_test_sample = df_test.sample(2000, random_state=42) si len(df_test) > 2000 else df_test
     print(f">> Evaluando KNN con métrica: {sim_metric}")
+    
+    best_k = None
+    best_df_preds = None
+    best_rmse = float('inf')
+    
     for k in k_values:
-        rmse_k, cobertura_k = knn.evaluate(df_test, k, sim_metric)
-        results.append({'K': k, 'RMSE': rmse_k, 'Cobertura': cobertura_k})
-        print(f"  K={k:3d} | RMSE: {rmse_k:.4f} | Cobertura: {cobertura_k:.2f}%")
+        rmse_k, mae_k, cobertura_k, df_preds_k = knn.evaluate(df_test, k, sim_metric)
+        results.append({
+            'K': k, 
+            'RMSE': rmse_k,
+            'MAE': mae_k,
+            'Cobertura': cobertura_k
+        })
+        print(f"  K={k:3d} | RMSE: {rmse_k:.4f} | MAE: {mae_k:.4f} | Cobertura: {cobertura_k:.2f}%")
         
-    return pd.DataFrame(results), knn
+        if rmse_k < best_rmse:
+            best_rmse = rmse_k
+            best_k = k
+            best_df_preds = df_preds_k
+            
+    df_results = pd.DataFrame(results)
+    df_results.to_csv(results_file, index=False)
+    print(f"Resultados guardados de búsqueda en '{results_file}'")
+    
+    print(f"\nEjemplo de Predicciones del mejor KNN (K = {best_k}):")
+    if best_df_preds is not None and not best_df_preds.empty:
+        print(best_df_preds.head(10))
+    
+    return df_results, knn
 
 if __name__ == "__main__":
     pass
