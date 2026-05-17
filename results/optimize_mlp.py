@@ -6,29 +6,38 @@ import optuna
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import mean_absolute_error
 
-def check_or_run_optuna_mlp(df_train, df_test, X_test, y_test, dataset, NUM_USERS, NUM_ITEMS, device):
+def check_or_run_optuna_mlp(df_train, df_test, NUM_USERS, NUM_ITEMS):
     """
-    Revisa si el estudio de Optuna para MLP ya existe en la carpeta de resultados.
-    Si existe, lo carga. Si no, lanza la optimización bayesiana de 40 intentos.
+    Versión optimizada: Calcula internamente los tensores, el dispositivo y los datasets 
+    de PyTorch para dejar el notebook principal con una sola línea de llamada limpia.
     """
-    # Como el script está dentro de 'results', guardamos el pkl en su misma ubicación
     ruta_script_dir = os.path.dirname(os.path.abspath(__file__))
     ruta_archivo_mlp = os.path.join(ruta_script_dir, 'optuna_study_mlp.pkl')
 
     # 1. COMPROBACIÓN DE EXISTENCIA
+
     if os.path.exists(ruta_archivo_mlp):
-        print(f"📦 Detectado estudio previo. Cargando resultados desde: {ruta_archivo_mlp}")
+        # os.path.basename extrae solo 'optuna_study_mlp.pkl'
+        print(f"📦 Detectado estudio previo. Cargando resultados desde: {os.path.basename(ruta_archivo_mlp)}")
         with open(ruta_archivo_mlp, 'rb') as f:
             study_mlp = pickle.load(f)
         print(f"   [Cargado] Mejor MAE previo: {study_mlp.best_value:.4f} | Parámetros: {study_mlp.best_params}")
         return study_mlp
+    print("🔍 No se encontró ningún estudio previo. Preparando optimización bayesiana para MLP...")
 
-    print("🔍 No se encontró ningún estudio previo. Preparando optimización bayesiana...")
+    # 🎯 TRABAJO SUCIO INTERNO (Calculado automáticamente)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    X_test = df_test[['user_id', 'anime_id']]
+    y_test = df_test['rating']
+    
+    users_t = torch.tensor(df_train['user_id'].values, dtype=torch.long)
+    items_t = torch.tensor(df_train['anime_id'].values, dtype=torch.long)
+    ratings_t = torch.tensor(df_train['rating'].values, dtype=torch.float32)
+    dataset = TensorDataset(users_t, items_t, ratings_t)
 
     # =====================================================================
     # 2. DEFINICIÓN DE LA FUNCIÓN OBJETIVO DEL MLP
     # =====================================================================
-    # Importamos dinámicamente la clase para evitar fallos si se declara en otro archivo
     from mlp import MLPModel 
 
     def objective_mlp(trial):
@@ -100,5 +109,4 @@ def check_or_run_optuna_mlp(df_train, df_test, X_test, y_test, dataset, NUM_USER
     return study_mlp
 
 if __name__ == "__main__":
-    
     pass
