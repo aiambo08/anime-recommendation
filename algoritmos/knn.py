@@ -142,72 +142,72 @@ class KNNRecommender:
         return rmse, mae, cobertura, df_preds
 
 
-def generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file='results/resultados_knn.csv'):
-    """
-    Genera un archivo CSV con las relaciones Source-Target a partir de un modelo KNN 
-    para ser visualizadas en el frontend (anime-nexus). Basado en sklearn NearestNeighbors.
-    """
-    from sklearn.neighbors import NearestNeighbors
-    from scipy.sparse import csr_matrix
+# def generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file='results/resultados_knn.csv'):
+#     """
+#     Genera un archivo CSV con las relaciones Source-Target a partir de un modelo KNN 
+#     para ser visualizadas en el frontend (anime-nexus). Basado en sklearn NearestNeighbors.
+#     """
+#     from sklearn.neighbors import NearestNeighbors
+#     from scipy.sparse import csr_matrix
     
-    print(">> Generando métricas KNN Item-Item con sklearn para frontend...")
+#     print(">> Generando métricas KNN Item-Item con sklearn para frontend...")
     
-    # Crear mappear de IDs a índices
-    user_ids = df_train['user_id'].unique()
-    anime_ids = df_train['anime_id'].unique()
+#     # Crear mappear de IDs a índices
+#     user_ids = df_train['user_id'].unique()
+#     anime_ids = df_train['anime_id'].unique()
     
-    user2idx = {u: idx for idx, u in enumerate(user_ids)}
-    anime2idx = {a: idx for idx, a in enumerate(anime_ids)}
-    idx2anime = {idx: a for a, idx in anime2idx.items()}
+#     user2idx = {u: idx for idx, u in enumerate(user_ids)}
+#     anime2idx = {a: idx for idx, a in enumerate(anime_ids)}
+#     idx2anime = {idx: a for a, idx in anime2idx.items()}
     
-    NUM_USERS = len(user2idx)
-    NUM_ITEMS = len(anime2idx)
+#     NUM_USERS = len(user2idx)
+#     NUM_ITEMS = len(anime2idx)
     
-    row_idx = df_train['user_id'].map(user2idx).values
-    col_idx = df_train['anime_id'].map(anime2idx).values
+#     row_idx = df_train['user_id'].map(user2idx).values
+#     col_idx = df_train['anime_id'].map(anime2idx).values
     
-    # Matriz User-Item
-    matrix_user_item = csr_matrix(
-        (df_train['rating'].values.astype('float32'), (row_idx, col_idx)),
-        shape=(NUM_USERS, NUM_ITEMS)
-    )
+#     # Matriz User-Item
+#     matrix_user_item = csr_matrix(
+#         (df_train['rating'].values.astype('float32'), (row_idx, col_idx)),
+#         shape=(NUM_USERS, NUM_ITEMS)
+#     )
     
-    item_item_matrix = matrix_user_item.transpose()
-    knn_model = NearestNeighbors(metric='cosine', algorithm='brute')
-    knn_model.fit(item_item_matrix)
+#     item_item_matrix = matrix_user_item.transpose()
+#     knn_model = NearestNeighbors(metric='cosine', algorithm='brute')
+#     knn_model.fit(item_item_matrix)
     
-    distances, indices = knn_model.kneighbors(item_item_matrix, n_neighbors=n_neighbors)
+#     distances, indices = knn_model.kneighbors(item_item_matrix, n_neighbors=n_neighbors)
     
-    resultados = []
-    for i in range(len(idx2anime)):
-        source_anime = idx2anime[i]
+#     resultados = []
+#     for i in range(len(idx2anime)):
+#         source_anime = idx2anime[i]
         
-        for j in range(1, len(indices[i])):
-            target_anime = idx2anime[indices[i][j]]
-            distancia = distances[i][j]
-            similitud = 1 - distancia if distancia <= 1 else 1 / (1 + distancia)
+#         for j in range(1, len(indices[i])):
+#             target_anime = idx2anime[indices[i][j]]
+#             distancia = distances[i][j]
+#             similitud = 1 - distancia if distancia <= 1 else 1 / (1 + distancia)
             
-            resultados.append({
-                'source': source_anime,
-                'target': target_anime,
-                'distance': distancia,
-                'similarity': similitud,
-                'rank': j
-            })
+#             resultados.append({
+#                 'source': source_anime,
+#                 'target': target_anime,
+#                 'distance': distancia,
+#                 'similarity': similitud,
+#                 'rank': j
+#             })
             
-    df_knn_results = pd.DataFrame(resultados)
-    df_knn_results.to_csv(output_file, index=False)
-    print(f"✅ Resultados KNN exportados correctamente al frontend en {output_file}")
+#     df_knn_results = pd.DataFrame(resultados)
+#     df_knn_results.to_csv(output_file, index=False)
+#     print(f"✅ Resultados KNN exportados correctamente al frontend en {output_file}")
 
 
 def run_knn(df_train, df_test, k_values=[5, 10, 20, 30, 50], sim_metric='jmsd', results_file='results/resultados_k_optimo.csv', force_recompute=False):
     # Crear la carpeta de resultados si no existe
     os.makedirs(os.path.dirname(results_file), exist_ok=True)
     
-    # Generar resultados para el frontend si no existen
-    frontend_file = 'results/resultados_knn.csv'
-    if not os.path.exists(frontend_file):
-        generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file=frontend_file)
+    # # Generar resultados para el frontend si no existen
+    # frontend_file = 'results/resultados_knn.csv'
+    # if not os.path.exists(frontend_file):
+    #     generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file=frontend_file)
 
     print(">> Inicializando modelo KNN...")
     knn = KNNRecommender(df_train)

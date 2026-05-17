@@ -38,7 +38,7 @@ def check_or_run_optuna_mlp(df_train, df_test, NUM_USERS, NUM_ITEMS):
     # =====================================================================
     # 2. DEFINICIÓN DE LA FUNCIÓN OBJETIVO DEL MLP
     # =====================================================================
-    from mlp import MLPModel 
+    from algoritmos.mlp import MLPModel 
 
     def objective_mlp(trial):
         d_latente = trial.suggest_int('latent_dim', 16, 64, step=16)

@@ -33,7 +33,7 @@ def check_or_run_optuna_gmf(df_train, df_test, NUM_USERS, NUM_ITEMS):
     ratings_t = torch.tensor(df_train['rating'].values, dtype=torch.float32)
     dataset = TensorDataset(users_t, items_t, ratings_t)
 
-    from gmf import GMFModel 
+    from algoritmos.gmf import GMFModel 
 
     def objective_gmf(trial):
         d_latente = trial.suggest_int('latent_dim', 5, 65, step=5)
