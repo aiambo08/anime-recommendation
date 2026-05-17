@@ -151,14 +151,36 @@ def generar_resultados_gmf_frontend(wrapper, df_train, n_neighbors=6, output_fil
 # =====================================================================
 # 4. FUNCIÓN ORQUESTADORA (Punto de entrada del backend)
 # =====================================================================
+import pickle
+
 def run_gmf(df_train, df_test, force_recompute=False, **kwargs):
     """
     Función de ejecución principal para el GMF.
+    Carga automáticamente los mejores parámetros desde el estudio de Optuna (.pkl) si existen.
     """
     # Creamos directorios si no existen
     os.makedirs('results', exist_ok=True)
     weights_file = 'results/GMF_weights.pth'
     frontend_file = 'results/resultados_gmf_frontend.csv'
+    optuna_file = 'optuna_study_gmf.pkl' # Ruta al estudio de Optuna GMF
+    
+    # 🎯 AUTOMATIZACIÓN: Intentar leer los parámetros óptimos del .pkl
+    best_latent_dim = kwargs.get('latent_dim', None)
+    best_lr = kwargs.get('lr', None)
+    
+    if (best_latent_dim is None or best_lr is None) and os.path.exists(optuna_file):
+        try:
+            print(f">> Detectado estudio de Optuna en '{optuna_file}'. Cargando hiperparámetros óptimos...")
+            study_gmf = pickle.load(open(optuna_file, 'rb'))
+            best_latent_dim = study_gmf.best_params['latent_dim']
+            best_lr = study_gmf.best_params['lr']
+            print(f"   [Optuna] Asignados -> latent_dim: {best_latent_dim} | lr: {best_lr:.5f}")
+        except Exception as e:
+            print(f"⚠️ Error al leer el .pkl de Optuna: {e}. Se usarán valores por defecto.")
+            
+    # Si no hay pkl ni parámetros manuales, usamos tus fallbacks clásicos del script
+    if best_latent_dim is None: best_latent_dim = 40
+    if best_lr is None: best_lr = 0.00628
     
     # Calculamos dimensiones dinámicas en base a los datos
     num_users = df_train['user_id'].max() + 1
@@ -168,8 +190,8 @@ def run_gmf(df_train, df_test, force_recompute=False, **kwargs):
     gmf_recommender = GMFRecommender(
         num_users=num_users, 
         num_items=num_items, 
-        latent_dim=kwargs.get('latent_dim', 40),
-        lr=kwargs.get('lr', 0.00628)
+        latent_dim=best_latent_dim,
+        lr=best_lr
     )
     
     # Lógica de carga o re-entrenamiento
@@ -177,7 +199,7 @@ def run_gmf(df_train, df_test, force_recompute=False, **kwargs):
         print(f"Cargando red lineal pre-entrenada desde {weights_file}...")
         gmf_recommender.model.load_state_dict(torch.load(weights_file, map_location=gmf_recommender.device, weights_only=True))
     else:
-        print("Iniciando entrenamiento GMF en la GPU...")
+        print(f"Iniciando entrenamiento GMF en la GPU ({kwargs.get('epochs', 10)} épocas)...")
         gmf_recommender.fit(df_train, epochs=kwargs.get('epochs', 10))
         torch.save(gmf_recommender.model.state_dict(), weights_file)
         print(f"Pesos de la red GMF guardados en {weights_file}")

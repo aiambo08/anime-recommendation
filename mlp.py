@@ -158,16 +158,39 @@ def generar_resultados_mlp_frontend(wrapper, df_train, n_neighbors=6, output_fil
 # =====================================================================
 # 4. FUNCIÓN ORQUESTADORA (Punto de entrada del backend)
 # =====================================================================
+# =====================================================================
+# 4. FUNCIÓN ORQUESTADORA (Punto de entrada del backend automatizado)
+# =====================================================================
+import pickle
+
 def run_mlp(df_train, df_test, force_recompute=False, **kwargs):
     """
-    Función de ejecución principal. Carga pesos previos si existen, o entrena 
-    desde cero si se requiere, generando finalmente los ficheros del frontend.
+    Función de ejecución principal. Carga automáticamente los mejores parámetros
+    desde el estudio de Optuna (.pkl) si existen, y gestiona los pesos (.pth).
     """
-    # Creamos directorios si no existen
     os.makedirs('results', exist_ok=True)
     weights_file = 'results/MLP_weights.pth'
     frontend_file = 'results/resultados_mlp_frontend.csv'
+    optuna_file = 'optuna_study_mlp.pkl' # Ruta al estudio de Optuna
     
+    # 🎯 AUTOMATIZACIÓN: Intentar leer los parámetros óptimos del .pkl
+    best_latent_dim = kwargs.get('latent_dim', None)
+    best_lr = kwargs.get('lr', None)
+    
+    if (best_latent_dim is None or best_lr is None) and os.path.exists(optuna_file):
+        try:
+            print(f">> Detectado estudio de Optuna en '{optuna_file}'. Cargando hiperparámetros óptimos...")
+            study_mlp = pickle.load(open(optuna_file, 'rb'))
+            best_latent_dim = study_mlp.best_params['latent_dim']
+            best_lr = study_mlp.best_params['lr']
+            print(f"   [Optuna] Asignados -> latent_dim: {best_latent_dim} | lr: {best_lr:.5f}")
+        except Exception as e:
+            print(f"⚠️ Error al leer el .pkl de Optuna: {e}. Se usarán valores por defecto.")
+    
+    # Si no hay pkl ni parámetros manuales, usamos el fallback clásico del script
+    if best_latent_dim is None: best_latent_dim = 16
+    if best_lr is None: best_lr = 0.001
+
     # Calculamos dimensiones dinámicas en base a los datos
     num_users = df_train['user_id'].max() + 1
     num_items = df_train['anime_id'].max() + 1
@@ -176,8 +199,8 @@ def run_mlp(df_train, df_test, force_recompute=False, **kwargs):
     mlp_recommender = MLPRecommender(
         num_users=num_users, 
         num_items=num_items, 
-        latent_dim=kwargs.get('latent_dim', 16),
-        lr=kwargs.get('lr', 0.001)
+        latent_dim=best_latent_dim,
+        lr=best_lr
     )
     
     # Lógica de carga o re-entrenamiento
@@ -185,7 +208,7 @@ def run_mlp(df_train, df_test, force_recompute=False, **kwargs):
         print(f"Cargando red pre-entrenada desde {weights_file}...")
         mlp_recommender.model.load_state_dict(torch.load(weights_file, map_location=mlp_recommender.device, weights_only=True))
     else:
-        print("Iniciando entrenamiento profundo desde cero...")
+        print(f"Iniciando entrenamiento profundo desde cero ({kwargs.get('epochs', 10)} épocas)...")
         mlp_recommender.fit(df_train, epochs=kwargs.get('epochs', 10))
         torch.save(mlp_recommender.model.state_dict(), weights_file)
         print(f"Pesos de la red guardados en {weights_file}")
@@ -199,6 +222,5 @@ def run_mlp(df_train, df_test, force_recompute=False, **kwargs):
         generar_resultados_mlp_frontend(mlp_recommender, df_train, n_neighbors=6, output_file=frontend_file)
         
     return {"RMSE": rmse, "MAE": mae, "Cobertura": cobertura}, mlp_recommender
-
 if __name__ == "__main__":
     pass
