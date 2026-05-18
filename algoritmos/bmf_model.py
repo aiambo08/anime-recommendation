@@ -16,39 +16,29 @@ class BernoulliMatrixFactorization:
         self.num_iterations = num_iterations
         self.random_state = random_state
         
-        # Asumimos valoraciones del 1 al 10 según el dataset de Anime
         self.scores = np.arange(1, 11)
         self.num_scores = len(self.scores)
         
-        self.U = None # Matriz de factores de usuarios
-        self.V = None # Matriz de factores de items
+        self.U = None
+        self.V = None
         self.num_users = 0
         self.num_items = 0
 
     def fit(self, R_train):
-        """
-        Entrena el modelo BMF utilizando la matriz dispersa de entrenamiento.
-        """
         self.num_users, self.num_items = R_train.shape
-        
-        # Extraemos coordenadas para el SGD
         coo_train = R_train.tocoo()
         train_users = coo_train.row.astype(int)
         train_items = coo_train.col.astype(int)
         train_ratings = coo_train.data.astype('float32')
         n_ratings = len(train_ratings)
 
-        # Inicialización de factores tridimensionales: (Scores, Usuarios/Items, Factores)
         np.random.seed(self.random_state)
         self.U = np.random.uniform(0, 1, (self.num_scores, self.num_users, self.num_factors)).astype('float32')
         self.V = np.random.uniform(0, 1, (self.num_scores, self.num_items, self.num_factors)).astype('float32')
 
         print("Comenzando el entrenamiento de BMF...")
-        
         for s_idx, score in enumerate(self.scores):
-            print(f"  -> Entrenando factores para el Score: {score}")
             target = (train_ratings == score).astype(float)
-            
             for epoch in range(self.num_iterations):
                 idx = np.random.permutation(n_ratings)
                 u_shuf = train_users[idx]
@@ -63,25 +53,20 @@ class BernoulliMatrixFactorization:
                     dot = np.dot(self.U[s_idx, u], self.V[s_idx, i])
                     pred = expit(dot)
                     error = t - pred
-                    
                     u_old = self.U[s_idx, u].copy()
                     
                     self.U[s_idx, u] += self.learning_rate * (error * self.V[s_idx, i] - self.regularization * self.U[s_idx, u])
                     self.V[s_idx, i] += self.learning_rate * (error * u_old - self.regularization * self.V[s_idx, i])
                     
-        print("Entrenamiento BMF finalizado.")
+        print(" Entrenamiento BMF finalizado.")
 
     def predict(self, users, items):
-        """
-        Predice la nota devolviendo el 'score' con la probabilidad más alta.
-        """
         best_preds = np.zeros(len(users))
         best_probs = np.zeros(len(users)) - 1
         
         for s_idx, score in enumerate(self.scores):
             dot = np.sum(self.U[s_idx, users] * self.V[s_idx, items], axis=1)
             prob = expit(dot)
-            
             mask = prob > best_probs
             best_probs[mask] = prob[mask]
             best_preds[mask] = score
@@ -89,17 +74,14 @@ class BernoulliMatrixFactorization:
         return best_preds
 
     def evaluate_rmse_mae(self, test_users, test_items, test_ratings):
-        """
-        Evalúa y devuelve el RMSE y MAE del modelo.
-        """
         preds = self.predict(test_users, test_items)
         rmse = np.sqrt(mean_squared_error(test_ratings, preds))
         mae = mean_absolute_error(test_ratings, preds)
         return rmse, mae
 
-    def evaluate_ranking(self, test_users, test_items, test_ratings, R_train, n_recommendations=5, theta=8, num_negatives=30):
+    def evaluate_ranking(self, test_users, test_items, test_ratings, R_train, n_recommendations=5, theta=8, num_negatives=100):
         """
-        Evalúa métricas de Ranking (Precision, Recall, F1, nDCG) utilizando Negative Sampling.
+        Evalúa métricas de Ranking utilizando Negative Sampling y previene IndexErrors.
         """
         user_test_data = {}
         for u, i, true_r in zip(test_users, test_items, test_ratings):
@@ -109,6 +91,7 @@ class BernoulliMatrixFactorization:
             user_test_data[u]['true_ratings'].append(true_r)
             
         precisions, recalls, ndcgs = [], [], []
+        random.seed(self.random_state)
         
         for u, data in user_test_data.items():
             true_ratings = np.array(data['true_ratings'])
@@ -120,22 +103,23 @@ class BernoulliMatrixFactorization:
                 
             train_items_seen = set(R_train[u].indices)
             test_items_seen = set(items)
-            
             negative_items = set()
-            while len(negative_items) < num_negatives:
+            
+            # Seguridad: no pedir más negativos de los que existen en el vocabulario del modelo
+            max_posibles = self.num_items - len(train_items_seen) - len(test_items_seen)
+            n_negs = min(num_negatives, max_posibles)
+            
+            while len(negative_items) < n_negs:
                 neg_item = random.randint(0, self.num_items - 1)
                 if neg_item not in train_items_seen and neg_item not in test_items_seen:
                     negative_items.add(neg_item)
                     
             items_to_evaluate = np.array(list(relevant_items) + list(negative_items))
-            
-            # Usar el método interno para predecir solo sobre estos ítems
             user_array = np.full(len(items_to_evaluate), u)
             best_preds = self.predict(user_array, items_to_evaluate)
             
             top_n_idx = np.argsort(best_preds)[::-1][:n_recommendations]
             top_n_items = items_to_evaluate[top_n_idx]
-            
             relevant_set = set(relevant_items)
             hits = sum(1 for item in top_n_items if item in relevant_set)
             
@@ -152,14 +136,11 @@ class BernoulliMatrixFactorization:
             relevant_true_ratings = true_ratings[true_ratings >= theta]
             ideal_idx = np.argsort(relevant_true_ratings)[::-1][:n_recommendations]
             idcg = sum((2**relevant_true_ratings[idx] - 1) / math.log2(pos + 2) for pos, idx in enumerate(ideal_idx))
-            
             ndcgs.append(dcg / idcg if idcg > 0 else 0)
             
-        avg_precision = np.mean(precisions)
-        avg_recall = np.mean(recalls)
+        avg_precision = np.mean(precisions) if precisions else 0
+        avg_recall = np.mean(recalls) if recalls else 0
         avg_f1 = 2 * (avg_precision * avg_recall) / (avg_precision + avg_recall) if (avg_precision + avg_recall) > 0 else 0
-        avg_ndcg = np.mean(ndcgs)
+        avg_ndcg = np.mean(ndcgs) if ndcgs else 0
         
         return avg_precision, avg_recall, avg_f1, avg_ndcg
-
-
