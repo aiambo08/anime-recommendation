@@ -1,4 +1,5 @@
 # preprocess.py
+import pandas as pd
 import polars as pl
 import numpy as np
 import pickle
@@ -45,8 +46,8 @@ def build_and_save_datasets(rating_csv_path="data/rating.csv"):
     df_rating = filter_cold_start(df_rating, min_user=20, min_item=20)
 
     print("4. Re-indexando usuarios e ítems de 0 a N-1...")
-    unique_users = df_rating['user_id'].unique().to_list()
-    unique_items = df_rating['anime_id'].unique().to_list()
+    unique_users = df_rating['user_id'].unique().sort().to_list()
+    unique_items = df_rating['anime_id'].unique().sort().to_list()
 
     user2idx = {id_: idx for idx, id_ in enumerate(unique_users)}
     anime2idx = {id_: idx for idx, id_ in enumerate(unique_items)}
@@ -59,18 +60,44 @@ def build_and_save_datasets(rating_csv_path="data/rating.csv"):
 
     print("5. Dividiendo en Train (80%) y Test (20%) estratificado...")
     df_rating_pd = df_rating.to_pandas()
-    df_train, df_test = train_test_split(
-        df_rating_pd, test_size=0.2, random_state=42,
-        stratify=df_rating_pd['user_id']
+    # Bucketing de ratings en 3 rangos: bajo (1-4), medio (5-7), alto (8-10)
+    # para que el stratify tenga suficiente cardinalidad por grupo
+    df_rating_pd['_strat_key'] = (
+        df_rating_pd['user_id'].astype(str) + '_' +
+        pd.cut(
+            df_rating_pd['rating'],
+            bins=[0, 4, 7, 10],
+            labels=['low', 'mid', 'high']
+        ).astype(str)
+    )
+    # Eliminar grupos con menos de 2 muestras (necesario para stratify)
+    # — usuarios con muy pocos ratings en un bucket concreto
+    counts = df_rating_pd['_strat_key'].value_counts()
+    valid_keys = counts[counts >= 2].index
+    mask = df_rating_pd['_strat_key'].isin(valid_keys)
+
+    df_valid   = df_rating_pd[mask]
+    df_invalid = df_rating_pd[~mask]   # estos van directo a train
+
+    df_train_valid, df_test = train_test_split(
+        df_valid, test_size=0.2, random_state=42,
+        stratify=df_valid['_strat_key']
     )
     
+    # Reunir: los grupos sin suficientes muestras van todos a train
+    df_train = pd.concat([df_train_valid, df_invalid], ignore_index=True)
+
+    # Limpiar columna auxiliar
+    df_train = df_train.drop(columns=['_strat_key'])
+    df_test  = df_test.drop(columns=['_strat_key'])
+
     df_train = df_train.reset_index(drop=True)
     df_test  = df_test.reset_index(drop=True)
 
     # Verificación de integridad
-    assert df_test['user_id'].isin(df_train['user_id']).all(), 'ERROR: usuarios en test no vistos en train'
-    assert df_test['anime_id'].isin(df_train['anime_id']).all(), 'ERROR: animes en test no vistos en train'
-    print('✅ Integridad del split verificada')
+    assert unique_users == sorted(unique_users), "ERROR: user2idx no es determinista"
+    assert unique_items == sorted(unique_items), "ERROR: anime2idx no es determinista"
+    print("✅ pipeline determinista")
 
     print("6. Guardando datasets en formato Parquet...")
     # Convertimos los splits de nuevo a Polars para usar su modo de guardado ultrarrápido

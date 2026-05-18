@@ -31,6 +31,9 @@ class KNNRecommender:
         
         # Cache medias
         self.user_means_cache = {u: self._rating_average_train(u) for u in self.ratings_train}
+        
+        # Cache de similitudes
+        self.sim_cache = {}
 
     def _rating_average_train(self, u):
         if u not in self.ratings_train:
@@ -70,8 +73,9 @@ class KNNRecommender:
         jaccard = len(items_comun) / len(items_union)
         
         cuadr_diff = sum((self.ratings_train[u][i] - self.ratings_train[v][i])**2 for i in items_comun)
-        msd = (1 / len(items_comun)) * cuadr_diff
-        return jaccard * (1 - msd)
+        R_RANGE_SQ = (self.R_MAX - self.R_MIN) ** 2  
+        msd_norm = cuadr_diff / (len(items_comun) * R_RANGE_SQ)
+        return jaccard * (1 - msd_norm)
 
     def prediction_knn(self, u, i, k, sim_metric='jmsd'):
         if u not in self.ratings_train or i not in self.items_train:
@@ -83,7 +87,16 @@ class KNNRecommender:
         for v in self.usuarios_por_item_train.get(i, set()):
             if v == u:
                 continue
-            sim = sim_func(u, v)
+            
+            # Ordenamos para asegurar que la clave sea la misma sin importar el orden de u y v
+            pair = (min(u, v), max(u, v))
+            
+            if pair in self.sim_cache:
+                sim = self.sim_cache[pair]
+            else:
+                sim = sim_func(u, v)
+                self.sim_cache[pair] = sim
+                
             if sim is not None:
                 candidatos.append((v, sim))
         
