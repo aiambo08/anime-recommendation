@@ -204,10 +204,10 @@ def run_knn(df_train, df_test, k_values=[5, 10, 20, 30, 50], sim_metric='jmsd', 
     # Crear la carpeta de resultados si no existe
     os.makedirs(os.path.dirname(results_file), exist_ok=True)
     
-    # # Generar resultados para el frontend si no existen
-    # frontend_file = 'results/resultados_knn.csv'
-    # if not os.path.exists(frontend_file):
-    #     generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file=frontend_file)
+    # Generar resultados para el frontend si no existen
+    frontend_file = 'results/resultados_knn.csv'
+    if not os.path.exists(frontend_file):
+        generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file=frontend_file)
 
     print(">> Inicializando modelo KNN...")
     knn = KNNRecommender(df_train)

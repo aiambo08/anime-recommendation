@@ -22,10 +22,15 @@ const config: Config = {
         "knn-dim":      "#00f2ff33",
         "knn-glow":     "#00f2ff66",
 
-        // Accent — PMF / BMF
+        // Accent — PMF
         "pmf":          "#fff000",
         "pmf-dim":      "#fff00033",
         "pmf-glow":     "#fff00066",
+
+        // Accent — BMF
+        "bmf":          "#ff6b00",
+        "bmf-dim":      "#ff6b0033",
+        "bmf-glow":     "#ff6b0066",
 
         // Accent — NCF
         "ncf":          "#ff00ff",
@@ -48,6 +53,7 @@ const config: Config = {
       boxShadow: {
         "knn-glow":  "0 0 12px 2px #00f2ff55, 0 0 40px 4px #00f2ff22",
         "pmf-glow":  "0 0 12px 2px #fff00055, 0 0 40px 4px #fff00022",
+        "bmf-glow":  "0 0 12px 2px #ff6b0055, 0 0 40px 4px #ff6b0022",
         "ncf-glow":  "0 0 12px 2px #ff00ff55, 0 0 40px 4px #ff00ff22",
         "glass":     "inset 0 1px 0 rgba(255,255,255,0.04), 0 4px 24px rgba(0,0,0,0.5)",
         "panel":     "0 0 0 1px rgba(255,255,255,0.06), 0 8px 32px rgba(0,0,0,0.6)",
@@ -57,6 +63,7 @@ const config: Config = {
         "scan-lines":   "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.07) 2px, rgba(0,0,0,0.07) 4px)",
         "knn-gradient": "linear-gradient(135deg, #00f2ff22, #0a0a0a)",
         "pmf-gradient": "linear-gradient(135deg, #fff00022, #0a0a0a)",
+        "bmf-gradient": "linear-gradient(135deg, #ff6b0022, #0a0a0a)",
         "ncf-gradient": "linear-gradient(135deg, #ff00ff22, #0a0a0a)",
       },
       backgroundSize: {
@@ -65,6 +72,7 @@ const config: Config = {
       animation: {
         "pulse-knn":   "pulse-knn 2s cubic-bezier(0.4,0,0.6,1) infinite",
         "pulse-pmf":   "pulse-pmf 2s cubic-bezier(0.4,0,0.6,1) infinite",
+        "pulse-bmf":   "pulse-bmf 2s cubic-bezier(0.4,0,0.6,1) infinite",
         "pulse-ncf":   "pulse-ncf 2s cubic-bezier(0.4,0,0.6,1) infinite",
         "scan":        "scan 8s linear infinite",
         "flicker":     "flicker 0.15s infinite",
@@ -81,6 +89,10 @@ const config: Config = {
         "pulse-pmf": {
           "0%,100%": { boxShadow: "0 0 8px 1px #fff00044" },
           "50%":     { boxShadow: "0 0 20px 4px #fff00088" },
+        },
+        "pulse-bmf": {
+          "0%,100%": { boxShadow: "0 0 8px 1px #ff6b0044" },
+          "50%":     { boxShadow: "0 0 20px 4px #ff6b0088" },
         },
         "pulse-ncf": {
           "0%,100%": { boxShadow: "0 0 8px 1px #ff00ff44" },

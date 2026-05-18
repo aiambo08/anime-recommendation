@@ -23,7 +23,7 @@ import { ModelKey } from "@/lib/store";
 const ACCENT: Record<ModelKey, { hex: string; text: string; border: string; dim: string }> = {
   KNN: { hex: "#00f2ff", text: "text-knn", border: "border-knn", dim: "bg-knn-dim" },
   PMF: { hex: "#fff000", text: "text-pmf", border: "border-pmf", dim: "bg-pmf-dim" },
-  BMF: { hex: "#fff000", text: "text-pmf", border: "border-pmf", dim: "bg-pmf-dim" },
+  BMF: { hex: "#ff6b00", text: "text-bmf", border: "border-bmf", dim: "bg-bmf-dim" },
   NCF: { hex: "#ff00ff", text: "text-ncf", border: "border-ncf", dim: "bg-ncf-dim" },
 };
 
@@ -194,7 +194,9 @@ function IdleView({ model, ac }: { model: ModelKey; ac: typeof ACCENT[ModelKey] 
           {model} Results
         </p>
         <p className="mt-0.5 font-mono text-2xs text-nt-muted">
-          DROP resultados_{model.toLowerCase()}*.csv
+          {model === "NCF"
+            ? "DROP resultados_gmf_frontend.csv or resultados_mlp_frontend.csv"
+            : `DROP resultados_${model.toLowerCase()}*.csv`}
         </p>
       </div>
     </motion.div>
