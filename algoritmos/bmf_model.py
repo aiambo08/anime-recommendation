@@ -1,13 +1,53 @@
 import numpy as np
 import math
 import random
+import concurrent.futures
 from scipy.special import expit
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+
+def _train_single_score_worker(s_idx, score, train_users, train_items, train_ratings, 
+                               num_users, num_items, num_factors, learning_rate, 
+                               regularization, num_iterations, random_state):
+    """
+    Función trabajadora independiente (Worker) fuera de la clase.
+    Permite que cada núcleo de la CPU de Mac procese un score de forma aislada y en paralelo.
+    """
+    target = (train_ratings == score).astype(float)
+    n_ratings = len(train_ratings)
+    
+    # Inicialización local de los factores latentes usando una semilla única por score
+    np.random.seed(random_state + s_idx)
+    U_s = np.random.uniform(0, 1, (num_users, num_factors)).astype('float32')
+    V_s = np.random.uniform(0, 1, (num_items, num_factors)).astype('float32')
+    
+    for epoch in range(num_iterations):
+        # Mezclamos los datos en cada época para el Descenso de Gradiente Estocástico
+        idx = np.random.permutation(n_ratings)
+        u_shuf = train_users[idx]
+        i_shuf = train_items[idx]
+        t_shuf = target[idx]
+        
+        for n in range(n_ratings):
+            u = u_shuf[n]
+            i = i_shuf[n]
+            t = t_shuf[n]
+            
+            dot = np.dot(U_s[u], V_s[i])
+            pred = expit(dot)
+            error = t - pred
+            
+            u_old = U_s[u].copy()
+            
+            U_s[u] += learning_rate * (error * V_s[i] - regularization * U_s[u])
+            V_s[i] += learning_rate * (error * u_old - regularization * V_s[i])
+            
+    return s_idx, U_s, V_s
+
 
 class BernoulliMatrixFactorization:
     """
     Modelo de Recomendación basado en Bernoulli Matrix Factorization (BMF).
-    Entrena una matriz de factores latentes para cada posible valoración (score).
+    Optimizado con Multi-processing paralelo sobre la dimensión de scores.
     """
     def __init__(self, num_factors=20, learning_rate=0.05, regularization=0.1, num_iterations=10, random_state=42):
         self.num_factors = num_factors
@@ -19,46 +59,48 @@ class BernoulliMatrixFactorization:
         self.scores = np.arange(1, 11)
         self.num_scores = len(self.scores)
         
-        self.U = None
-        self.V = None
+        self.U = None 
+        self.V = None 
         self.num_users = 0
         self.num_items = 0
 
     def fit(self, R_train):
+        """
+        Entrena el modelo BMF en paralelo utilizando todos los núcleos disponibles de la CPU.
+        """
         self.num_users, self.num_items = R_train.shape
+        
         coo_train = R_train.tocoo()
         train_users = coo_train.row.astype(int)
         train_items = coo_train.col.astype(int)
         train_ratings = coo_train.data.astype('float32')
-        n_ratings = len(train_ratings)
 
-        np.random.seed(self.random_state)
-        self.U = np.random.uniform(0, 1, (self.num_scores, self.num_users, self.num_factors)).astype('float32')
-        self.V = np.random.uniform(0, 1, (self.num_scores, self.num_items, self.num_factors)).astype('float32')
+        # Reservamos espacio en memoria para las matrices tridimensionales finales
+        self.U = np.zeros((self.num_scores, self.num_users, self.num_factors), dtype='float32')
+        self.V = np.zeros((self.num_scores, self.num_items, self.num_factors), dtype='float32')
 
-        print("Comenzando el entrenamiento de BMF...")
-        for s_idx, score in enumerate(self.scores):
-            target = (train_ratings == score).astype(float)
-            for epoch in range(self.num_iterations):
-                idx = np.random.permutation(n_ratings)
-                u_shuf = train_users[idx]
-                i_shuf = train_items[idx]
-                t_shuf = target[idx]
+        print(f"🚀 Iniciando entrenamiento PARALELO de BMF ({self.num_scores} núcleos en paralelo)...")
+        
+        # Lanzamos el Pool de procesos asíncronos en paralelo
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    _train_single_score_worker,
+                    s_idx, score, train_users, train_items, train_ratings,
+                    self.num_users, self.num_items, self.num_factors,
+                    self.learning_rate, self.regularization, self.num_iterations, self.random_state
+                )
+                for s_idx, score in enumerate(self.scores)
+            ]
+            
+            # Recolectamos los resultados conforme vayan terminando los núcleos
+            for future in concurrent.futures.as_completed(futures):
+                s_idx, U_s, V_s = future.result()
+                self.U[s_idx] = U_s
+                self.V[s_idx] = V_s
+                print(f" -> Factor binarizado para Score {self.scores[s_idx]} completado.")
                 
-                for n in range(n_ratings):
-                    u = u_shuf[n]
-                    i = i_shuf[n]
-                    t = t_shuf[n]
-                    
-                    dot = np.dot(self.U[s_idx, u], self.V[s_idx, i])
-                    pred = expit(dot)
-                    error = t - pred
-                    u_old = self.U[s_idx, u].copy()
-                    
-                    self.U[s_idx, u] += self.learning_rate * (error * self.V[s_idx, i] - self.regularization * self.U[s_idx, u])
-                    self.V[s_idx, i] += self.learning_rate * (error * u_old - self.regularization * self.V[s_idx, i])
-                    
-        print(" Entrenamiento BMF finalizado.")
+        print(" Entrenamiento BMF en paralelo finalizado exitosamente.")
 
     def predict(self, users, items):
         best_preds = np.zeros(len(users))
@@ -80,9 +122,6 @@ class BernoulliMatrixFactorization:
         return rmse, mae
 
     def evaluate_ranking(self, test_users, test_items, test_ratings, R_train, n_recommendations=5, theta=8, num_negatives=100):
-        """
-        Evalúa métricas de Ranking utilizando Negative Sampling y previene IndexErrors.
-        """
         user_test_data = {}
         for u, i, true_r in zip(test_users, test_items, test_ratings):
             if u not in user_test_data:
@@ -105,7 +144,6 @@ class BernoulliMatrixFactorization:
             test_items_seen = set(items)
             negative_items = set()
             
-            # Seguridad: no pedir más negativos de los que existen en el vocabulario del modelo
             max_posibles = self.num_items - len(train_items_seen) - len(test_items_seen)
             n_negs = min(num_negatives, max_posibles)
             
