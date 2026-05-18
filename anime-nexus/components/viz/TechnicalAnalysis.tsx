@@ -6,6 +6,9 @@
  *   KNN → Force-Directed Graph
  *   PMF/BMF → Dual Radar Chart
  *   NCF → 10×10 Latent-Space Heatmap
+ *
+ * HEIGHT FIX: uses flex-col h-full + explicit min-h on viz panel
+ * so D3's getBoundingClientRect() always receives non-zero dimensions.
  */
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -28,7 +31,7 @@ export function TechnicalAnalysis() {
   return (
     <div className="flex flex-col h-full">
       {/* Tab bar */}
-      <div className="flex gap-1 mb-4 border-b border-nt-border pb-3">
+      <div className="flex gap-1 mb-4 border-b border-nt-border pb-3 shrink-0">
         {TABS.map((tab) => {
           const isActive = active === tab.id;
           return (
@@ -68,8 +71,8 @@ export function TechnicalAnalysis() {
         })}
       </div>
 
-      {/* Viz panel */}
-      <div className="flex-1 relative overflow-hidden">
+      {/* Viz panel — explicit flex-1 + min-h so D3 gets real pixels */}
+      <div className="flex-1 min-h-0 relative">
         <AnimatePresence mode="wait">
           <motion.div
             key={active}
@@ -77,7 +80,7 @@ export function TechnicalAnalysis() {
             animate={{ opacity: 1, x: 0 }}
             exit={{   opacity: 0, x: -20 }}
             transition={{ duration: 0.3, ease: "easeOut" }}
-            className="absolute inset-0"
+            className="absolute inset-0 overflow-hidden"
           >
             {active === "KNN"     && <KnnForceGraph />}
             {active === "PMF_BMF" && <PmfBmfRadar />}

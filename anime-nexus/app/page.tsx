@@ -1,181 +1,468 @@
-"use client";
 /**
  * app/page.tsx
  * ─────────────────────────────────────────────────────────────
- * Landing page — Neural Terminal hero + data ingestion + data engine.
- * Staggered Framer Motion reveal on load.
+ * Home page — Educational overview of the recommendation system.
+ *
+ * Sections:
+ * Hero       — Project title + brief description
+ * [01]       — Results summary table (from notebook metrics)
+ * [02]       — Model equations + formulas
+ * [03]       — Architecture diagram / model cards
  */
-import { motion, type Variants } from "framer-motion";
-import { NexusHeader } from "@/components/NexusHeader";
-import { CsvUploadZone } from "@/components/CsvUploadZone";
-import { DataDashboard } from "@/components/DataDashboard";
-import {
-  ArrowRight, GitBranch, Layers, Network, Brain,
-} from "lucide-react";
+"use client";
 
-// ── Framer variants ───────────────────────────────────────────
-const container: Variants = {
-  hidden: {},
-  show: {
-    transition: { staggerChildren: 0.12 },
-  },
-};
+import React, { useState, useEffect, useRef } from "react";
+import { motion } from "framer-motion";
+import Link from "next/link";
+import Script from "next/script";
+import { ArrowRight, GitBranch, Layers, Brain, Cpu } from "lucide-react";
 
-const item: Variants = {
-  hidden: { opacity: 0, y: 24 },
-  show:   { opacity: 1, y: 0, transition: { duration: 0.55, ease: "easeOut" } },
-};
+// ─── Declaración de Tipos para TypeScript ─────────────────────
+declare global {
+  interface Window {
+    katex?: {
+      render: (formula: string, element: HTMLElement, options?: any) => void;
+    };
+  }
+}
 
-// ── Model architecture cards ──────────────────────────────────
-const MODEL_CARDS = [
+// ─── Metric data from notebook evaluation ─────────────────────
+const METRICS = [
   {
-    id:    "KNN",
-    name:  "K-Nearest Neighbors",
-    icon:  <GitBranch size={16} />,
+    model:    "KNN",
+    fullName: "K-Nearest Neighbours",
+    color:    "#00f2ff",
+    rmse:     "1.3391",
+    mae:      "1.0017",
+    coverage: "100%",
+    k:        "k = 10",
+    note:     "Item-based cosine similarity",
+  },
+  {
+    model:    "PMF",
+    fullName: "Probabilistic MF",
+    color:    "#fff000",
+    rmse:     "1.102220",
+    mae:      "0.7312",
+    coverage: "100%",
+    k:        "n_factors=50, lr=0.005, reg=0.05, epochs=30, patience=5",
+    note:     "Gaussian latent factors",
+  },
+  {
+    model:    "BMF",
+    fullName: "Bernoulli MF",
+    color:    "#ff6b00",
+    rmse:     "1.4372",
+    mae:      "0.9900",
+    coverage: "100%",
+    k:        "K = 10",
+    note:     "Bernoulli binary factors",
+  },
+  {
+    model:    "GMF",
+    fullName: "Generalised MF (NCF)",
+    color:    "#ff00ff",
+    rmse:     "1.2344",
+    mae:      "0.9329",
+    coverage: "100%",
+    k:        "latent_dim=60",
+    note:     "Element-wise product",
+  },
+  {
+    model:    "MLP",
+    fullName: "Multi-Layer Perceptron (NCF)",
+    color:    "#c084fc",
+    rmse:     "1.2149",
+    mae:      "0.9188",
+    coverage: "100%",
+    k:        "latent_dim=64, lr= 0.0096",
+    note:     "Deep concat embedding",
+  },
+];
+
+// ─── Formula cards (LaTeX Convertido y Optimizado) ─────────────
+const FORMULAS = [
+  {
+    model: "KNN",
+    icon: <GitBranch size={18} />,
     color: "#00f2ff",
-    desc:  "Distance-based collaborative filtering. Finds the k most similar users/items in latent space.",
+    tagline: "K-Nearest Neighbors",
+    formula: "\\hat{r}_{ui} = \\bar{r}_u + \\frac{\\sum_v  \\text{sim}(u,v) \\cdot (r_{v,i} - \\bar{r}_v) }{\\sum_v |\\text{sim}(u,v)|}",
+    predict: "\\text{JMSD}(u,v) = \\text{Jaccard}(u,v) \\cdot (1 - \\text{MSD}(u,v))",
+    params: "k = 10 neighbours",
+    details: "User-rating vectors projected into item space. Cosine similarity identifies the k nearest items. Predictions are similarity-weighted rating deviations."
   },
   {
-    id:    "PMF",
-    name:  "Probabilistic MF",
-    icon:  <Layers size={16} />,
-    color: "#fff000",
-    desc:  "Latent factor model with Gaussian priors. Decomposes the interaction matrix probabilistically.",
+    model:    "PMF",
+    icon:     <Layers size={18} />,
+    color:    "#fff000",
+    tagline:  "Gaussian Latent Factors",
+    formula:  "\\hat{r}_{u,i} = p_u^T q_i",
+    predict:  "",
+    params:   "f = 50, lr = 0.005, \\lambda = 0.05",
+    details:  "Each user/item mapped to a f-dim Gaussian latent factor. SGD minimises squared error + L2 regularisation. Score = dot product of latent vectors.",
   },
   {
-    id:    "BMF",
-    name:  "Bayesian MF",
-    icon:  <Network size={16} />,
-    color: "#fff000",
-    desc:  "Uncertainty-aware factorization. Full posterior inference yields calibrated confidence intervals.",
+    model:    "BMF",
+    icon:     <Cpu size={18} />,
+    color:    "#ff6b00",
+    tagline:  "Binary Bernoulli Factors",
+    formula:  "P(R \\mid U, V) = \\prod_{i,j} \\text{Bern}(r_{ij} \\mid \\sigma(u_i^T v_j))^{I_{ij}}",
+    predict:  "P(r_{ij}=s) = \\sigma(u_i^T V_s) \\quad \\text{for } s \\in \\{1 \\dots 10\\}",
+    params:   "K = 10 scores, d = 20 factors",
+    details:  "Each rating value s has its own item factor matrix V_s. User factors U shared across scores. Bernoulli likelihood + variational Bayes inference.",
   },
   {
-    id:    "NCF",
-    name:  "Neural CF",
-    icon:  <Brain size={16} />,
-    color: "#ff00ff",
-    desc:  "Deep learning interaction model. Non-linear embedding layers replace the dot-product assumption.",
+    model:    "NCF (MLP)",
+    icon:     <Brain size={18} />,
+    color:    "#ff00ff",
+    tagline:  "Neural Collaborative Filtering",
+    formula:  "\\hat{r}_{u,i} = w^T z_2 + b",
+    predict:  "",
+    params:   "latent_dim = 64, lr = 0.0096",
+    details:  "MLP captures non-linear patterns via concatenated embeddings",
   },
-] as const;
+];
 
-export default function HomePage() {
+// ─── Componente Interno Renderizador de Matemáticas ───────────
+interface MathRendererProps {
+  formula: string;
+  inline?: boolean;
+  triggerRefresh?: boolean;
+}
+
+function MathRenderer({ formula, inline = false, triggerRefresh = false }: MathRendererProps) {
+  const containerRef = useRef<HTMLDivElement | HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (containerRef.current && window.katex) {
+      window.katex.render(formula, containerRef.current, {
+        displayMode: !inline,
+        throwOnError: false,
+      });
+    }
+  }, [formula, inline, triggerRefresh]);
+
+  if (inline) {
+    return <span ref={containerRef as React.RefObject<HTMLSpanElement>} />;
+  }
+
   return (
-    <div className="flex min-h-dvh flex-col">
-      <NexusHeader />
+    <div
+      ref={containerRef as React.RefObject<HTMLDivElement>}
+      className="overflow-x-auto w-full py-1 scrollbar-thin"
+    />
+  );
+}
 
-      <main className="flex-1 px-6 py-12 mx-auto w-full max-w-screen-2xl">
-        <motion.div variants={container} initial="hidden" animate="show">
+// ─── Stagger animation preset ─────────────────────────────────
+import type { Transition } from "framer-motion";
 
-          {/* ── [00] Hero ─────────────────────────────────────── */}
-          <motion.section variants={item} className="mb-16 relative">
-            {/* Background glow blob */}
-            <div
-              className="pointer-events-none absolute -top-24 -left-24 h-96 w-96 rounded-full opacity-10 blur-3xl"
-              style={{ background: "radial-gradient(circle, #00f2ff 0%, transparent 70%)" }}
-            />
+const fadeUp = (i: number): {
+  initial:    { opacity: number; y: number };
+  whileInView:{ opacity: number; y: number };
+  viewport:   { once: boolean };
+  transition: Transition;
+} => ({
+  initial:    { opacity: 0, y: 32 },
+  whileInView:{ opacity: 1, y: 0 },
+  viewport:   { once: true },
+  transition: { duration: 0.55, ease: "easeOut" as const, delay: i * 0.07 },
+});
 
-            <p className="nt-label mb-3 text-knn">
-              SYS://INIT &gt; RECOMMENDATION_ENGINE &gt; READY
-            </p>
-            <h1 className="font-display text-4xl font-black uppercase leading-none tracking-[0.08em] text-nt-text md:text-6xl">
-              <span className="text-glow-knn">Anime</span>
-              <br />
-              <span className="text-nt-muted">Recommendation</span>
-              <br />
-              Nexus
-            </h1>
-            <p className="mt-6 max-w-2xl font-body text-base text-nt-muted leading-relaxed">
-              Four recommendation models —{" "}
-              <span className="text-knn font-semibold">KNN</span>,{" "}
-              <span className="text-pmf font-semibold">PMF</span>,{" "}
-              <span className="text-pmf font-semibold">BMF</span>, and{" "}
-              <span className="text-ncf font-semibold">NCF</span> — dissected
-              inside a cyberpunk neural terminal. Upload your datasets to begin
-              the analysis.
-            </p>
+// ─── Page ─────────────────────────────────────────────────────
+export default function HomePage() {
+  const [katexReady, setKatexReady] = useState(false);
 
-            <div className="mt-8 flex items-center gap-4">
-              <a href="/dashboard" className="btn-neon knn flex items-center gap-2">
-                BEGIN ANALYSIS <ArrowRight size={14} />
-              </a>
-              <span className="nt-label">OR DROP CSV FILES BELOW</span>
-            </div>
-          </motion.section>
+  // Asegura el renderizado en caso de que KaTeX ya estuviese pre-cargado globalmente
+  useEffect(() => {
+    if (window.katex) {
+      setKatexReady(true);
+    }
+  }, []);
 
-          {/* ── [01] Data Ingestion ───────────────────────────── */}
-          <motion.section variants={item} className="mb-16">
-            <div className="nt-label mb-4 text-nt-muted">
-              [01] DATA INGESTION — UPLOAD SOURCE FILES
-            </div>
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              <CsvUploadZone
-                dataType="anime"
-                label="anime.csv — Metadata"
-                accent="knn"
-              />
-              <CsvUploadZone
-                dataType="ratings"
-                label="rating.csv — Interactions"
-                accent="ncf"
-              />
-            </div>
-          </motion.section>
+  return (
+    <main className="min-h-screen bg-nt-bg text-nt-text">
+      {/* Hojas de estilo cargadas directamente (React las enviará automáticamente al <head>) */}
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
+        crossOrigin="anonymous"
+      />
 
-          {/* ── [02] Data Engine ──────────────────────────────── */}
-          <motion.section variants={item}>
-            <DataDashboard />
-          </motion.section>
+      {/* Script del CDN cargado de forma asíncrona y segura */}
+      <Script
+        src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"
+        crossOrigin="anonymous"
+        strategy="afterInteractive"
+        onLoad={() => setKatexReady(true)}
+      />
 
-          {/* ── [03] Model Architecture reference ────────────── */}
-          <motion.section variants={item} className="mt-4">
-            <div className="nt-label mb-4 text-nt-muted">
-              [03] MODEL ARCHITECTURE — FOUR ENGINES
-            </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {MODEL_CARDS.map((m, i) => (
-                <motion.div
-                  key={m.id}
-                  initial={{ opacity: 0, y: 32 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.3 + i * 0.1, duration: 0.5, ease: "easeOut" }}
-                  whileHover={{ scale: 1.03, transition: { duration: 0.2 } }}
-                  className="glass-panel rounded-sm border border-nt-border p-5 relative overflow-hidden"
-                >
-                  {/* Accent top stripe */}
-                  <div
-                    className="absolute inset-x-0 top-0 h-px"
-                    style={{ background: m.color, boxShadow: `0 0 8px 1px ${m.color}66` }}
-                  />
-                  <div className="flex items-center gap-2 mb-3">
-                    <span style={{ color: m.color }}>{m.icon}</span>
-                    <span
-                      className="nt-chip"
-                      style={{ color: m.color, borderColor: m.color + "66" }}
-                    >
-                      {m.id}
-                    </span>
-                  </div>
-                  <p className="font-display text-xs font-bold uppercase tracking-widest text-nt-text mb-2">
-                    {m.name}
-                  </p>
-                  <p className="font-body text-xs text-nt-muted leading-relaxed">
-                    {m.desc}
-                  </p>
-                </motion.div>
-              ))}
-            </div>
-          </motion.section>
+      {/* ══════════ HERO ══════════ */}
+      <section className="relative overflow-hidden border-b border-nt-border">
+        {/* Background mesh */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: "radial-gradient(ellipse 70% 60% at 50% -10%, #00f2ff0d 0%, transparent 70%), radial-gradient(ellipse 40% 50% at 80% 80%, #ff00ff08 0%, transparent 60%)",
+          }}
+        />
+        {/* Grid pattern */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-[0.03]"
+          style={{
+            backgroundImage: "linear-gradient(#00f2ff 1px,transparent 1px), linear-gradient(90deg,#00f2ff 1px,transparent 1px)",
+            backgroundSize:  "48px 48px",
+          }}
+        />
 
-        </motion.div>
-      </main>
+        <div className="relative mx-auto max-w-6xl px-6 py-20">
+          <motion.p
+            {...fadeUp(0)}
+            className="nt-label mb-4 text-2xs"
+            style={{ color: "#00f2ff88" }}
+          >
+            SYS://NEXUS &gt; ANIME_RECOMMENDATION &gt; v2.0
+          </motion.p>
 
-      {/* Footer */}
-      <footer className="border-t border-nt-border px-6 py-4 mt-16">
-        <div className="mx-auto flex max-w-screen-2xl items-center justify-between">
-          <span className="nt-label">ANIME RECOMMENDATION NEXUS © 2024</span>
-          <span className="nt-label text-knn">NEURAL TERMINAL v1.0</span>
+          <motion.h1
+            {...fadeUp(1)}
+            className="font-display text-5xl md:text-7xl font-black uppercase tracking-tighter leading-none"
+            style={{
+              background:          "linear-gradient(135deg, #00f2ff 0%, #c084fc 50%, #ff00ff 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+            }}
+          >
+            Anime<br />Recommendation<br />Nexus
+          </motion.h1>
+
+          <motion.p
+            {...fadeUp(2)}
+            className="mt-6 max-w-2xl font-body text-sm text-nt-muted leading-relaxed"
+          >
+            A comparative analysis of 5 recommendation algorithms — KNN, PMF, BMF, GMF, and MLP — applied to
+            the MyAnimeList dataset (6.5K anime · 73K users · 7.8M ratings).
+            Evaluate their mathematical foundations, latent-space representations,
+            and predictive accuracy on a unified benchmark.
+          </motion.p>
+
+          <motion.div {...fadeUp(3)} className="mt-8 flex flex-wrap gap-3">
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-2 rounded-sm px-5 py-2.5 font-display text-xs uppercase tracking-widest font-bold transition-all hover:opacity-80"
+              style={{
+                background:  "linear-gradient(135deg, #00f2ff22, #ff00ff22)",
+                border:      "1px solid #00f2ff66",
+                color:       "#00f2ff",
+                boxShadow:   "0 0 24px 2px #00f2ff22",
+              }}
+            >
+              Launch Dashboard
+              <ArrowRight size={14} />
+            </Link>
+            <a
+              href="https://myanimelist.net"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 rounded-sm px-5 py-2.5 font-mono text-xs uppercase tracking-widest border border-nt-border text-nt-muted hover:border-white/20 transition-colors"
+            >
+              MyAnimeList Dataset
+            </a>
+          </motion.div>
         </div>
-      </footer>
-    </div>
+      </section>
+
+      {/* ══════════ [01] RESULTS SUMMARY ══════════ */}
+      <section className="mx-auto max-w-6xl px-6 py-16">
+        <motion.div {...fadeUp(0)} className="mb-8">
+          <p className="nt-label text-2xs mb-2" style={{ color: "#00f2ff88" }}>
+            [01] BENCHMARK RESULTS
+          </p>
+          <h2 className="font-display text-2xl font-black uppercase tracking-widest">
+            Model Comparison
+          </h2>
+          <p className="mt-2 font-body text-xs text-nt-muted max-w-xl">
+            Evaluated on a 80/20 train-test split of the MAL rating dataset.
+            Lower RMSE/MAE = better accuracy. Coverage = % of test users with predictions.
+          </p>
+        </motion.div>
+
+        <motion.div {...fadeUp(1)} className="overflow-x-auto">
+          <table className="w-full border-collapse text-xs font-mono">
+            <thead>
+              <tr className="border-b border-nt-border">
+                <th className="py-3 px-4 text-left text-2xs uppercase tracking-widest text-nt-muted font-normal">Model</th>
+                <th className="py-3 px-4 text-right text-2xs uppercase tracking-widest text-nt-muted font-normal">RMSE ↓</th>
+                <th className="py-3 px-4 text-right text-2xs uppercase tracking-widest text-nt-muted font-normal">MAE ↓</th>
+                <th className="py-3 px-4 text-right text-2xs uppercase tracking-widest text-nt-muted font-normal">Coverage ↑</th>
+                <th className="py-3 px-4 text-left  text-2xs uppercase tracking-widest text-nt-muted font-normal">Params</th>
+                <th className="py-3 px-4 text-left  text-2xs uppercase tracking-widest text-nt-muted font-normal">Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {METRICS.map((m, i) => (
+                <motion.tr
+                  key={m.model}
+                  {...fadeUp(i)}
+                  className="border-b border-nt-border/40 hover:bg-white/[0.02] transition-colors"
+                >
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ background: m.color, boxShadow: `0 0 6px 2px ${m.color}88` }}
+                      />
+                      <div>
+                        <span className="font-bold" style={{ color: m.color }}>{m.model}</span>
+                        <span className="text-nt-muted ml-2 hidden sm:inline text-2xs">{m.fullName}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-3 px-4 text-right" style={{ color: m.color }}>{m.rmse}</td>
+                  <td className="py-3 px-4 text-right" style={{ color: m.color }}>{m.mae}</td>
+                  <td className="py-3 px-4 text-right text-nt-muted">{m.coverage}</td>
+                  <td className="py-3 px-4 text-nt-muted text-2xs">{m.k}</td>
+                  <td className="py-3 px-4 text-nt-muted text-2xs">{m.note}</td>
+                </motion.tr>
+              ))}
+            </tbody>
+          </table>
+        </motion.div>
+
+        {/* RMSE visual bars */}
+        <motion.div {...fadeUp(6)} className="mt-6 grid grid-cols-1 sm:grid-cols-5 gap-3">
+          {METRICS.map((m) => {
+            const best  = Math.min(...METRICS.map(x => Number(x.rmse)));
+            const worst = Math.max(...METRICS.map(x => Number(x.rmse)));
+            const pct   = 100 - ((Number(m.rmse) - best) / (worst - best)) * 100;
+            return (
+              <div key={m.model} className="glass-panel rounded-sm border border-nt-border p-3 flex flex-col gap-2">
+                <span className="font-display text-2xs uppercase" style={{ color: m.color }}>{m.model}</span>
+                <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full rounded-full"
+                    style={{ background: m.color }}
+                    initial={{ width: 0 }}
+                    whileInView={{ width: `${pct}%` }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.8, ease: "easeOut" }}
+                  />
+                </div>
+                <span className="font-mono text-2xs text-nt-muted">RMSE {m.rmse}</span>
+              </div>
+            );
+          })}
+        </motion.div>
+      </section>
+
+      {/* ══════════ [02] MODEL EQUATIONS ══════════ */}
+      <section className="border-t border-nt-border">
+        <div className="mx-auto max-w-6xl px-6 py-16">
+          <motion.div {...fadeUp(0)} className="mb-10">
+            <p className="nt-label text-2xs mb-2" style={{ color: "#ff00ff88" }}>
+              [02] MATHEMATICAL FOUNDATIONS
+            </p>
+            <h2 className="font-display text-2xl font-black uppercase tracking-widest">
+              Algorithm Equations
+            </h2>
+          </motion.div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {FORMULAS.map((f, i) => (
+              <motion.div
+                key={f.model}
+                {...fadeUp(i)}
+                className="glass-panel rounded-sm border p-6 flex flex-col gap-4 group"
+                style={{ borderColor: f.color + "33" }}
+                whileHover={{ borderColor: f.color + "77", boxShadow: `0 0 24px 2px ${f.color}11` }}
+                transition={{ duration: 0.2 }}
+              >
+                {/* Header */}
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-8 h-8 rounded-sm border flex items-center justify-center shrink-0"
+                    style={{ borderColor: f.color + "55", color: f.color, background: f.color + "11" }}
+                  >
+                    {f.icon}
+                  </div>
+                  <div>
+                    <h3 className="font-display text-sm font-bold uppercase tracking-widest" style={{ color: f.color }}>
+                      {f.model}
+                    </h3>
+                    <p className="font-mono text-2xs text-nt-muted">{f.tagline}</p>
+                  </div>
+                </div>
+
+                {/* Main formula (Renderizado con KaTeX) */}
+                <div
+                  className="rounded-sm border p-4 min-h-[70px] flex items-center"
+                  style={{ borderColor: f.color + "22", background: f.color + "08" }}
+                >
+                  <MathRenderer formula={f.formula} triggerRefresh={katexReady} />
+                </div>
+
+                {/* Prediction formula (Renderizado con KaTeX Inline) */}
+                <div>
+                  <p className="font-mono text-2xs text-nt-muted uppercase mb-1.5 tracking-widest">Prediction</p>
+                  <div className="font-mono text-xs text-white/90">
+                    <MathRenderer formula={f.predict} inline={true} triggerRefresh={katexReady} />
+                  </div>
+                </div>
+
+                {/* Optimal params */}
+                <div className="flex items-center gap-2 mt-auto pt-2 border-t" style={{ borderColor: f.color + "22" }}>
+                  <span className="font-mono text-2xs text-nt-muted uppercase tracking-widest">Params</span>
+                  <span
+                    className="ml-auto rounded-sm px-2 py-0.5 font-mono text-2xs border"
+                    style={{ color: f.color, borderColor: f.color + "44", background: f.color + "0d" }}
+                  >
+                    {/* Permitimos soporte para símbolos LaTeX en parámetros también */}
+                    <MathRenderer formula={f.params} inline={true} triggerRefresh={katexReady} />
+                  </span>
+                </div>
+
+                {/* Description */}
+                <p className="font-body text-xs text-nt-muted leading-relaxed">{f.details}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════ [03] CTA ══════════ */}
+      <section className="border-t border-nt-border">
+        <div className="mx-auto max-w-6xl px-6 py-16 flex flex-col md:flex-row items-center gap-8">
+          <div className="flex-1">
+            <motion.p {...fadeUp(0)} className="nt-label text-2xs mb-2" style={{ color: "#fff00088" }}>
+              [03] INTERACTIVE ANALYSIS
+            </motion.p>
+            <motion.h2 {...fadeUp(1)} className="font-display text-3xl font-black uppercase tracking-wider">
+              Explore the Dashboard
+            </motion.h2>
+            <motion.p {...fadeUp(2)} className="mt-3 font-body text-sm text-nt-muted max-w-md leading-relaxed">
+              Load your model result CSVs to visualise KNN force graphs,
+              PMF/BMF radar charts, NCF heatmaps, and run the Gachapon
+              for random anime recommendations.
+            </motion.p>
+          </div>
+          <motion.div {...fadeUp(1)} className="shrink-0">
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-3 rounded-sm px-8 py-4 font-display text-sm uppercase tracking-widest font-bold transition-all hover:scale-105 active:scale-100"
+              style={{
+                background:  "linear-gradient(135deg, #00f2ff, #ff00ff)",
+                color:        "#000",
+                boxShadow:   "0 0 32px 4px #00f2ff44",
+              }}
+            >
+              Launch Dashboard
+              <ArrowRight size={16} />
+            </Link>
+          </motion.div>
+        </div>
+      </section>
+
+    </main>
   );
 }

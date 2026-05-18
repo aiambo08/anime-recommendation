@@ -161,3 +161,5 @@ class BernoulliMatrixFactorization:
         avg_ndcg = np.mean(ndcgs)
         
         return avg_precision, avg_recall, avg_f1, avg_ndcg
+
+

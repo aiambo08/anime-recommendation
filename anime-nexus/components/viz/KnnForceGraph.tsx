@@ -44,8 +44,9 @@ function jaccard(a: string[], b: string[]): number {
 
 // ─── Component ───────────────────────────────────────────────
 export function KnnForceGraph() {
-  const results = useModelResults("KNN");
-  const svgRef  = useRef<SVGSVGElement>(null);
+  const results      = useModelResults("KNN");
+  const svgRef       = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Build graph data from results
   const { nodes, links } = useMemo(() => {
@@ -72,113 +73,132 @@ export function KnnForceGraph() {
     return { nodes, links };
   }, [results]);
 
-  // D3 simulation — runs whenever nodes/links change (including first populated render)
+  // D3 simulation — runs whenever nodes/links change AND whenever the container gets real dimensions
   useEffect(() => {
     const svg = svgRef.current;
-    // Guard: only run when SVG is mounted AND we have data
-    if (!svg || nodes.length === 0) return;
+    const container = containerRef.current;
+    if (!svg || !container || nodes.length === 0) return;
 
-    const rect = svg.getBoundingClientRect();
-    const W = rect.width  || 600;
-    const H = rect.height || 400;
+    // Capture a non-null reference for the closure (TypeScript narrows here)
+    const svgEl: SVGSVGElement = svg;
+    let cleanup: (() => void) | undefined;
 
-    // Clear previous render
-    d3.select(svg).selectAll("*").remove();
+    function mount() {
+      const rect = svgEl.getBoundingClientRect();
+      const W = rect.width;
+      const H = rect.height;
+      if (W === 0 || H === 0) return; // not yet visible, observer will retry
 
-    // Defs — glow filter
-    const defs = d3.select(svg).append("defs");
-    const filter = defs.append("filter").attr("id", "knn-glow");
-    filter.append("feGaussianBlur")
-      .attr("stdDeviation", "3")
-      .attr("result", "coloredBlur");
-    const feMerge = filter.append("feMerge");
-    feMerge.append("feMergeNode").attr("in", "coloredBlur");
-    feMerge.append("feMergeNode").attr("in", "SourceGraphic");
+      // Clear previous render
+      d3.select(svgEl).selectAll("*").remove();
 
-    const g = d3.select(svg).append("g");
+      // Defs — glow filter
+      const defs = d3.select(svgEl).append("defs");
+      const filter = defs.append("filter").attr("id", "knn-glow");
+      filter.append("feGaussianBlur")
+        .attr("stdDeviation", "3")
+        .attr("result", "coloredBlur");
+      const feMerge = filter.append("feMerge");
+      feMerge.append("feMergeNode").attr("in", "coloredBlur");
+      feMerge.append("feMergeNode").attr("in", "SourceGraphic");
 
-    // Zoom
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.3, 4])
-      .on("zoom", (event) => g.attr("transform", event.transform));
-    d3.select(svg).call(zoom);
+      const g = d3.select(svgEl).append("g");
 
-    // Simulation
-    const sim = d3.forceSimulation<Node>(nodes)
-      .force("link", d3.forceLink<Node, Link>(links)
-        .id((d) => d.id)
-        .distance((l) => 80 - l.weight * 40)
-        .strength((l) => l.weight * 0.6)
-      )
-      .force("charge", d3.forceManyBody().strength(-120))
-      .force("center",  d3.forceCenter(W / 2, H / 2))
-      .force("collide", d3.forceCollide<Node>((d) => d.radius + 4));
+      // Zoom
+      const zoom = d3.zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.3, 4])
+        .on("zoom", (event) => g.attr("transform", event.transform));
+      d3.select(svgEl).call(zoom);
 
-    // Links
-    const link = g.append("g")
-      .selectAll<SVGLineElement, Link>("line")
-      .data(links)
-      .join("line")
-      .attr("stroke", KNN_COLOR)
-      .attr("stroke-opacity", (l) => l.weight * 0.5)
-      .attr("stroke-width",   (l) => l.weight * 2);
 
-    // Nodes
-    const node = g.append("g")
-      .selectAll<SVGGElement, Node>("g")
-      .data(nodes)
-      .join("g")
-      .call(
-        d3.drag<SVGGElement, Node>()
-          .on("start", (ev, d) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-          .on("drag",  (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
-          .on("end",   (ev, d) => { if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
-      );
+      // Simulation
+      const sim = d3.forceSimulation<Node>(nodes)
+        .force("link", d3.forceLink<Node, Link>(links)
+          .id((d) => d.id)
+          .distance((l) => 80 - l.weight * 40)
+          .strength((l) => l.weight * 0.6)
+        )
+        .force("charge", d3.forceManyBody().strength(-120))
+        .force("center",  d3.forceCenter(W / 2, H / 2))
+        .force("collide", d3.forceCollide<Node>((d) => d.radius + 4));
 
-    // Node circles
-    node.append("circle")
-      .attr("r", (d) => d.radius)
-      .attr("fill",   ACCENT_DIM)
-      .attr("stroke", KNN_COLOR)
-      .attr("stroke-width", 1.5)
-      .attr("filter", "url(#knn-glow)")
-      .style("cursor", "grab");
+      // Links
+      const link = g.append("g")
+        .selectAll<SVGLineElement, Link>("line")
+        .data(links)
+        .join("line")
+        .attr("stroke", KNN_COLOR)
+        .attr("stroke-opacity", (l) => l.weight * 0.5)
+        .attr("stroke-width",   (l) => l.weight * 2);
 
-    // Score ring (outer decorative ring proportional to score)
-    node.append("circle")
-      .attr("r",    (d) => d.radius + 3)
-      .attr("fill", "none")
-      .attr("stroke", KNN_COLOR)
-      .attr("stroke-opacity", (d) => d.score * 0.3)
-      .attr("stroke-width", 0.5)
-      .attr("stroke-dasharray", "2 3");
+      // Nodes
+      const node = g.append("g")
+        .selectAll<SVGGElement, Node>("g")
+        .data(nodes)
+        .join("g")
+        .call(
+          d3.drag<SVGGElement, Node>()
+            .on("start", (ev, d) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+            .on("drag",  (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+            .on("end",   (ev, d) => { if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
+        );
 
-    // Label (visible only for top-score nodes)
-    node.filter((d) => d.score > 0.6)
-      .append("text")
-      .attr("dy", (d) => -(d.radius + 6))
-      .attr("text-anchor", "middle")
-      .attr("fill", KNN_COLOR)
-      .attr("font-family", "'JetBrains Mono', monospace")
-      .attr("font-size", "9px")
-      .attr("opacity", 0.85)
-      .text((d) => d.label.slice(0, 18) + (d.label.length > 18 ? "…" : ""));
+      node.append("circle")
+        .attr("r", (d) => d.radius)
+        .attr("fill",   ACCENT_DIM)
+        .attr("stroke", KNN_COLOR)
+        .attr("stroke-width", 1.5)
+        .attr("filter", "url(#knn-glow)")
+        .style("cursor", "grab");
 
-    // Tooltip via title element
-    node.append("title")
-      .text((d) => `${d.label}\nScore: ${d.score.toFixed(4)}\n${d.genres.join(", ")}`);
+      node.append("circle")
+        .attr("r",    (d) => d.radius + 3)
+        .attr("fill", "none")
+        .attr("stroke", KNN_COLOR)
+        .attr("stroke-opacity", (d) => d.score * 0.3)
+        .attr("stroke-width", 0.5)
+        .attr("stroke-dasharray", "2 3");
 
-    sim.on("tick", () => {
-      link
-        .attr("x1", (d) => (d.source as Node).x ?? 0)
-        .attr("y1", (d) => (d.source as Node).y ?? 0)
-        .attr("x2", (d) => (d.target as Node).x ?? 0)
-        .attr("y2", (d) => (d.target as Node).y ?? 0);
-      node.attr("transform", (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+      node.filter((d) => d.score > 0.6)
+        .append("text")
+        .attr("dy", (d) => -(d.radius + 6))
+        .attr("text-anchor", "middle")
+        .attr("fill", KNN_COLOR)
+        .attr("font-family", "'JetBrains Mono', monospace")
+        .attr("font-size", "9px")
+        .attr("opacity", 0.85)
+        .text((d) => d.label.slice(0, 18) + (d.label.length > 18 ? "…" : ""));
+
+      node.append("title")
+        .text((d) => `${d.label}\nScore: ${d.score.toFixed(4)}\n${d.genres.join(", ")}`);
+
+      sim.on("tick", () => {
+        link
+          .attr("x1", (d) => (d.source as Node).x ?? 0)
+          .attr("y1", (d) => (d.source as Node).y ?? 0)
+          .attr("x2", (d) => (d.target as Node).x ?? 0)
+          .attr("y2", (d) => (d.target as Node).y ?? 0);
+        node.attr("transform", (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+      });
+
+      cleanup = () => { sim.stop(); };
+    }
+
+    // Try mounting immediately; if container has no size yet, observe resize
+    mount();
+
+    const ro = new ResizeObserver(() => {
+      if (cleanup) { cleanup(); cleanup = undefined; }
+      mount();
     });
+    ro.observe(container);
 
-    return () => { sim.stop(); };
+    return () => {
+      ro.disconnect();
+      cleanup?.();
+    };
   }, [nodes, links]);
+
 
   // ── Empty state (rendered when no data — SVG is NOT mounted) ──
   if (results.length === 0) {
@@ -187,7 +207,7 @@ export function KnnForceGraph() {
 
   // ── Data available — mount SVG so D3 can bind to it ──────────
   return (
-    <div className="relative w-full h-full min-h-[400px]">
+    <div ref={containerRef} className="relative w-full h-full min-h-[400px]">
       {/* Legend */}
       <div className="absolute top-2 left-2 z-10 flex flex-col gap-1">
         <span className="font-mono text-2xs" style={{ color: KNN_COLOR }}>
@@ -208,6 +228,7 @@ export function KnnForceGraph() {
     </div>
   );
 }
+
 
 // ─── Shared empty state ───────────────────────────────────────
 export function EmptyViz({ label, color, hint }: { label: string; color: string; hint: string }) {

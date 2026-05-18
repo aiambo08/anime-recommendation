@@ -57,13 +57,34 @@ export interface SortOptions {
 
 // ─── Hook ─────────────────────────────────────────────────────
 
+// Models whose CSV "target" column is an internal index, not a MAL id
+const LATENT_MODELS: ModelKey[] = ["PMF", "BMF", "NCF"];
+
 export function useRecommendationData() {
   // One worker ref per model key so concurrent uploads work
-  const workerRefs = useRef<Partial<Record<ModelKey, Worker>>>({});
+  const workerRefs   = useRef<Partial<Record<ModelKey, Worker>>>({});
+  // idx2anime: loaded once from /idx2anime.json (index→MAL id)
+  const idx2animeRef = useRef<[number, number][] | null>(null);
 
   const store     = useNexusStore();
   const animeMap  = useNexusStore((s) => s.animeMap);
   const models    = useNexusStore((s) => s.models);
+
+  // Lazily fetch idx2anime mapping (only once per page load)
+  const getIdx2Anime = useCallback(async (): Promise<[number, number][]> => {
+    if (idx2animeRef.current !== null) return idx2animeRef.current;
+    try {
+      const res = await fetch("/idx2anime.json");
+      const obj: Record<string, number> = await res.json();
+      const entries = Object.entries(obj).map(([k, v]) => [Number(k), v] as [number, number]);
+      idx2animeRef.current = entries;
+      return entries;
+    } catch {
+      console.warn("[NEXUS] Could not load idx2anime.json — latent model IDs may not resolve.");
+      idx2animeRef.current = [];
+      return [];
+    }
+  }, []);
 
   // ── Core action: parse result CSV + JOIN ─────────────────────
 
@@ -90,7 +111,6 @@ export function useRecommendationData() {
           worker.terminate();
           delete workerRefs.current[model];
 
-          // ── Verification: confirm data committed to global state ──
           console.log(
             `%c[NEXUS STORE] ${model} — ${msg.data.length} recommendations persisted in global state.`,
             "color: #00f2ff; font-weight: bold; font-family: monospace;"
@@ -98,12 +118,9 @@ export function useRecommendationData() {
           if (msg.data.length === 0) {
             console.warn(
               `[NEXUS STORE] ${model}: 0 results after JOIN. ` +
-              "Check browser DevTools for [joinWorker] logs to diagnose schema mismatch. " +
-              "Confirm anime.csv is loaded first (animeMap must be non-empty)."
+              "Check browser DevTools for [joinWorker] logs to diagnose schema mismatch."
             );
           }
-
-          // Trigger optional success callback for toast notifications
           onSuccess?.(msg.data.length);
         }
 
@@ -120,25 +137,33 @@ export function useRecommendationData() {
         delete workerRefs.current[model];
       };
 
-      // Serialise the Map to a transferable array for the worker
       const animeMapEntries = Array.from(animeMap.entries());
 
-      // Warn early if animeMap is empty — JOIN will produce title-less rows
       if (animeMapEntries.length === 0) {
         console.warn(
-          `[NEXUS] ${model}: animeMap is empty! Load anime.csv first for enriched results. ` +
-          "Proceeding with partial JOIN (anime metadata will show as 'Anime #ID')."
+          `[NEXUS] ${model}: animeMap is empty! Load anime.csv first. ` +
+          "Proceeding with partial JOIN."
         );
       }
 
-      worker.postMessage({
-        type:    "PARSE_RESULTS",
-        file,
-        model,
-        animeMapEntries,
-      });
+      // For latent models fetch idx2anime mapping then dispatch
+      const dispatch = (idx2animeEntries: [number, number][]) => {
+        worker.postMessage({
+          type: "PARSE_RESULTS",
+          file,
+          model,
+          animeMapEntries,
+          idx2animeEntries,
+        });
+      };
+
+      if (LATENT_MODELS.includes(model)) {
+        getIdx2Anime().then(dispatch);
+      } else {
+        dispatch([]);
+      }
     },
-    [animeMap, store]
+    [animeMap, store, getIdx2Anime]
   );
 
   // ── Trigger a JOIN on already-loaded raw results ─────────────

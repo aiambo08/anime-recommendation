@@ -108,7 +108,7 @@ export function DashboardView() {
       </div>
 
       {/* Content panel */}
-      <div className="glass-panel rounded-sm border border-nt-border p-6 min-h-[500px]">
+      <div className="glass-panel rounded-sm border border-nt-border p-6 h-[640px] flex flex-col">
         <AnimatePresence mode="wait">
           <motion.div
             key={mode}
@@ -116,11 +116,12 @@ export function DashboardView() {
             animate={{ opacity: 1, y: 0 }}
             exit={{   opacity: 0, y: -8 }}
             transition={{ duration: 0.35, ease: "easeOut" }}
+            className="flex-1 min-h-0"
           >
             {mode === "technical" && <TechnicalAnalysis />}
             {mode === "battle"    && <BattleRoyale />}
             {mode === "gachapon" && (
-              <div className="flex flex-col items-center gap-4 py-6">
+              <div className="flex flex-col items-center gap-4 py-6 h-full overflow-y-auto">
                 <div className="text-center">
                   <p className="nt-label mb-2" style={{ color: "#ffd700" }}>
                     SYS://GACHAPON &gt; RANDOM_REVEAL &gt; ACTIVE
@@ -130,7 +131,7 @@ export function DashboardView() {
                     Random Pull
                   </h3>
                   <p className="mt-1 font-body text-xs text-nt-muted">
-                    Drag the lever to reveal a random recommendation from the selected model's top 10.
+                    Drag the lever to reveal a random recommendation from the selected model&apos;s top 10.
                   </p>
                 </div>
                 <GachaponMachine />
@@ -139,6 +140,7 @@ export function DashboardView() {
           </motion.div>
         </AnimatePresence>
       </div>
+
     </div>
   );
 }

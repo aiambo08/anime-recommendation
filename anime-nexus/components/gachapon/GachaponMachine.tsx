@@ -27,7 +27,7 @@ import { CapsuleModal } from "./CapsuleModal";
 const MODEL_OPTIONS: { key: ModelKey; color: string; label: string }[] = [
   { key: "KNN", color: "#00f2ff", label: "K-Nearest" },
   { key: "PMF", color: "#fff000", label: "Prob. MF"  },
-  { key: "BMF", color: "#fff000", label: "Bayesian"  },
+  { key: "BMF", color: "#ff6b00", label: "Bayesian"  },
   { key: "NCF", color: "#ff00ff", label: "Neural CF" },
 ];
 
@@ -333,7 +333,7 @@ export function GachaponMachine() {
           style={{ color: "#64748b" }}
         >
           <AlertCircle size={12} />
-          <span>Load {state.selectedModel} results on the home page first</span>
+          <span>Load {state.selectedModel} results in the Dashboard first</span>
         </motion.div>
       )}
 
@@ -496,17 +496,36 @@ export function GachaponMachine() {
         </div>
       </MachineBody>
 
-      {/* ── Instructions ── */}
-      <p className="nt-label text-2xs text-center max-w-xs" style={{ color: "#334155" }}>
-        SELECT MODEL → DRAG LEVER DOWN → RELEASE → REVEAL
-      </p>
+      {/* ── Instructions + click-to-pull alternative ── */}
+      <div className="flex flex-col items-center gap-2">
+        <p className="nt-label text-2xs text-center max-w-xs" style={{ color: "#334155" }}>
+          SELECT MODEL → DRAG LEVER DOWN → RELEASE → REVEAL
+        </p>
+        <button
+          disabled={!hasData || isAnimating}
+          onClick={pull}
+          className="nt-chip text-2xs uppercase tracking-widest transition-all"
+          style={{
+            color:       hasData && !isAnimating ? accentColor : "#334155",
+            borderColor: hasData && !isAnimating ? accentColor + "55" : "#1e1e2e",
+            background:  hasData && !isAnimating ? accentColor + "0d" : "transparent",
+            cursor:      !hasData || isAnimating ? "not-allowed" : "pointer",
+            opacity:     !hasData || isAnimating ? 0.4 : 1,
+          }}
+        >
+          <ChevronDown size={10} className="inline mr-1" />
+          Click to Pull
+        </button>
+      </div>
 
       {/* ── Result Modal ── */}
-      <CapsuleModal
-        result={isRevealing ? state.result : null}
-        onClose={dismiss}
-        onReset={reset}
-      />
+      {isRevealing && state.result && (
+        <CapsuleModal
+          entry={state.result.entry}
+          rarity={state.result.rarity as "SSR" | "SR" | "R" | "N"}
+          onClose={dismiss}
+        />
+      )}
     </div>
   );
 }

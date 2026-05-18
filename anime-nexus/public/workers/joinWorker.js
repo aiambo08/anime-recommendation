@@ -4,53 +4,43 @@
  * Web Worker — performs the JOIN between a recommendation result
  * CSV and the anime metadata map, entirely off the main thread.
  *
+ * ─── ID RESOLUTION STRATEGY ──────────────────────────────────
+ * KNN csv  → "target" = real MAL anime_id (direct lookup)
+ * PMF/BMF/GMF/MLP csv → "target" = internal index (0-based)
+ *                       must be resolved via idx2anime map first
+ *
  * Message protocol (main → worker):
  *   {
- *     type:     "JOIN",
- *     results:  RawResultRow[],   // parsed from resultados_*.csv
- *     animeMap: [number, AnimeRow][]  // serialised Map entries
+ *     type:         "PARSE_RESULTS",
+ *     file:         File,
+ *     model:        string,
+ *     animeMapEntries: [number, AnimeRow][],   // mal_id → AnimeRow
+ *     idx2animeEntries?: [number, number][]    // index → mal_id  (for latent models)
  *   }
- *
- * Message protocol (worker → main):
- *   { type: "JOIN_COMPLETE", data: EnrichedResult[] }
- *   { type: "JOIN_ERROR",    message: string }
- *
- * ─────────────────────────────────────────────────────────────
- * Also handles CSV PARSE for recommendation result files:
- *
- * Message protocol (main → worker):
- *   { type: "PARSE_RESULTS", file: File, model: string, animeMapEntries: [...] }
  *
  * Message protocol (worker → main):
  *   { type: "PROGRESS",       percent: number }
  *   { type: "PARSE_COMPLETE", data: EnrichedResult[], model: string }
  *   { type: "PARSE_ERROR",    message: string }
- *
- * ─────────────────────────────────────────────────────────────
- * Supported CSV schemas:
- *   Generic:  anime_id | Anime_id | item_id | id | animeId  →  score | predicted_rating | similarity
- *   KNN:      source, target, distance, similarity, rank     →  "target" = recommended anime ID,
- *                                                               "similarity" = recommendation score
  */
 
 /* global self, importScripts */
 importScripts("https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js");
 
-const CHUNK_SIZE = 1024 * 256; // 256 KB — result files are small, keep it snappy
+const CHUNK_SIZE = 1024 * 256; // 256 KB
+
+// ── Models that use internal indices (not MAL IDs) in "target" ──
+const LATENT_MODELS = ["PMF", "BMF", "GMF", "MLP", "NCF"];
 
 // ── Normalisation helpers ─────────────────────────────────────
 
 /**
- * Try to extract the recommended anime_id from a parsed row.
- *
- * Candidate column names (ordered by preference):
- *   - "anime_id"  / "Anime_id"  — generic output format
- *   - "target"                  — KNN item-based format (resultados_knn.csv)
- *                                 columns: source, target, distance, similarity, rank
- *   - "item_id" / "id" / "animeId" — other model formats
+ * Extract the recommended item identifier from a CSV row.
+ * For latent models, "target" = internal index → must be translated via idx2anime.
+ * For KNN, "target" = real MAL anime_id.
  */
-function extractAnimeId(row) {
-  const candidates = ["anime_id", "Anime_id", "target", "item_id", "id", "animeId"];
+function extractRawTarget(row) {
+  const candidates = ["target", "anime_id", "Anime_id", "item_id", "id", "animeId"];
   for (const key of candidates) {
     const v = row[key];
     if (v !== undefined && v !== null && v !== "") {
@@ -62,15 +52,24 @@ function extractAnimeId(row) {
 }
 
 /**
- * Try to extract the recommendation score.
- *
- * KNN format uses "similarity" (0-1, higher = more similar = better recommendation).
- * IMPORTANT: "similarity" is checked BEFORE "distance" to avoid picking the wrong column.
- * If only "distance" is available, we invert it (1 - distance) so that sort order
- * (descending by score) correctly yields nearest neighbours first.
+ * Resolve a raw target value to a real MAL anime_id.
+ * For KNN the raw value IS the MAL id. For latent models it's an index.
+ */
+function resolveAnimeId(rawTarget, model, idx2anime) {
+  if (rawTarget === null) return null;
+  if (LATENT_MODELS.includes(model) && idx2anime) {
+    const malId = idx2anime.get(rawTarget);
+    return malId !== undefined ? malId : null;
+  }
+  return rawTarget; // KNN: already a MAL id
+}
+
+/**
+ * Extract the recommendation score.
+ * KNN / all models use "similarity" (higher = better).
+ * Fallback inverts "distance".
  */
 function extractScore(row) {
-  // Prefer explicit positive-correlation columns
   const preferredCandidates = ["score", "Score", "predicted_rating", "similarity", "value"];
   for (const key of preferredCandidates) {
     const v = row[key];
@@ -79,7 +78,6 @@ function extractScore(row) {
       if (!isNaN(n)) return n;
     }
   }
-  // Fallback: invert distance so "higher = better" is preserved
   const d = row["distance"];
   if (d !== undefined && d !== null && d !== "") {
     const n = Number(d);
@@ -88,9 +86,6 @@ function extractScore(row) {
   return 0;
 }
 
-/**
- * Try to extract a rank / position column if present.
- */
 function extractRank(row) {
   const candidates = ["rank", "Rank", "position", "k"];
   for (const key of candidates) {
@@ -104,27 +99,28 @@ function extractRank(row) {
 }
 
 // ── JOIN logic ────────────────────────────────────────────────
-function performJoin(rawRows, animeMap, model) {
+function performJoin(rawRows, animeMap, model, idx2anime) {
   const enriched = [];
   let skippedNoId = 0;
+  let skippedNoMapping = 0;
 
   for (const row of rawRows) {
-    const animeId = extractAnimeId(row);
-    if (animeId === null) {
-      skippedNoId++;
-      continue;
-    }
+    const rawTarget = extractRawTarget(row);
+    if (rawTarget === null) { skippedNoId++; continue; }
+
+    const animeId = resolveAnimeId(rawTarget, model, idx2anime);
+    if (animeId === null) { skippedNoMapping++; continue; }
 
     const meta  = animeMap.get(animeId);
     const score = extractScore(row);
     const rank  = extractRank(row);
 
     enriched.push({
-      anime_id:    animeId,
+      anime_id:    animeId,        // always a real MAL id after resolution
+      raw_index:   rawTarget,      // preserved for debugging
       score,
       rank,
       model,
-      // Metadata from anime.csv JOIN (falls back gracefully if ID not in map)
       title:       meta ? meta.name     : ("Anime #" + animeId),
       genre:       meta ? meta.genre    : "Unknown",
       type:        meta ? meta.type     : "Unknown",
@@ -134,25 +130,28 @@ function performJoin(rawRows, animeMap, model) {
     });
   }
 
-  // ── Diagnostic logging ────────────────────────────────────
+  // Diagnostic logging
   if (skippedNoId > 0) {
     var detectedCols = rawRows[0] ? Object.keys(rawRows[0]).join(", ") : "N/A";
     console.warn(
-      "[joinWorker] " + model + ": SKIPPED " + skippedNoId + "/" + rawRows.length + " rows — " +
-      "no recognisable anime_id column found.\n" +
-      "Detected columns: [" + detectedCols + "]\n" +
-      "Supported columns: anime_id, Anime_id, target, item_id, id, animeId"
+      "[joinWorker] " + model + ": SKIPPED " + skippedNoId + "/" + rawRows.length + " rows — no target column.\n" +
+      "Detected columns: [" + detectedCols + "]"
+    );
+  }
+  if (skippedNoMapping > 0) {
+    console.warn(
+      "[joinWorker] " + model + ": " + skippedNoMapping + " rows had no idx→MAL mapping (idx2anime incomplete)."
     );
   }
 
-  // Sort by score descending (higher = better recommendation)
+  // Sort by score descending
   enriched.sort(function(a, b) { return b.score - a.score; });
 
   console.log(
     "[joinWorker] " + model + ": JOIN complete — " +
     enriched.length + " enriched rows out of " + rawRows.length + " raw rows" +
-    (skippedNoId ? " (" + skippedNoId + " skipped)" : "") +
-    " | animeMap size: " + animeMap.size
+    " | animeMap size: " + animeMap.size +
+    (LATENT_MODELS.includes(model) ? " | idx2anime size: " + (idx2anime ? idx2anime.size : 0) : "")
   );
 
   return enriched;
@@ -162,30 +161,22 @@ function performJoin(rawRows, animeMap, model) {
 self.onmessage = function (e) {
   var msg = e.data;
 
-  // ── Direct JOIN (pre-parsed rows) ─────────────────────────
-  if (msg.type === "JOIN") {
-    try {
-      var animeMapJoin = new Map(msg.animeMap);
-      var resultJoin   = performJoin(msg.results, animeMapJoin, msg.model || "UNKNOWN");
-      self.postMessage({ type: "JOIN_COMPLETE", data: resultJoin });
-    } catch (err) {
-      self.postMessage({ type: "JOIN_ERROR", message: err.message });
-    }
-    return;
-  }
-
-  // ── Parse result CSV then JOIN in one pass ────────────────
   if (msg.type === "PARSE_RESULTS") {
-    var file           = msg.file;
-    var model          = msg.model;
-    var animeMapEntries = msg.animeMapEntries;
-    var animeMap       = new Map(animeMapEntries);
-    var rawRows        = [];
+    var file            = msg.file;
+    var model           = msg.model;
+    var animeMapEntries = msg.animeMapEntries || [];
+    var idx2animeRaw    = msg.idx2animeEntries || [];
+
+    var animeMap  = new Map(animeMapEntries);
+    var idx2anime = idx2animeRaw.length > 0 ? new Map(idx2animeRaw) : null;
+    var rawRows   = [];
 
     console.log(
       "[joinWorker] " + model + ": starting parse of \"" + file.name + "\"" +
       " (" + (file.size / 1024).toFixed(1) + " KB)" +
-      " | animeMap entries: " + animeMapEntries.length
+      " | animeMap: " + animeMapEntries.length +
+      " | idx2anime: " + idx2animeRaw.length +
+      " | isLatentModel: " + LATENT_MODELS.includes(model)
     );
 
     Papa.parse(file, {
@@ -207,23 +198,19 @@ self.onmessage = function (e) {
 
       complete: function() {
         try {
-          // Log detected headers so schema mismatches surface immediately in DevTools
           if (rawRows.length > 0) {
             console.log(
               "[joinWorker] " + model + ": CSV headers detected: [" +
               Object.keys(rawRows[0]).join(", ") + "]"
             );
           } else {
-            console.warn(
-              "[joinWorker] " + model + ": CSV parsed 0 rows — file may be empty or malformed."
-            );
+            console.warn("[joinWorker] " + model + ": CSV parsed 0 rows.");
           }
 
-          var enriched = performJoin(rawRows, animeMap, model);
+          var enriched = performJoin(rawRows, animeMap, model, idx2anime);
 
-          // ── SUCCESS verification log ──────────────────────
           console.log(
-            "%c[NEXUS] " + model + " DATA COMMITTED TO MEMORY — " +
+            "%c[NEXUS] " + model + " DATA COMMITTED — " +
             enriched.length + " recommendations ready.",
             "color: #00f2ff; font-weight: bold; font-family: monospace;"
           );
@@ -239,6 +226,18 @@ self.onmessage = function (e) {
       },
     });
 
+    return;
+  }
+
+  // Legacy JOIN (pre-parsed rows, no idx2anime needed in this path)
+  if (msg.type === "JOIN") {
+    try {
+      var animeMapJoin = new Map(msg.animeMap);
+      var resultJoin   = performJoin(msg.results, animeMapJoin, msg.model || "UNKNOWN", null);
+      self.postMessage({ type: "JOIN_COMPLETE", data: resultJoin });
+    } catch (err) {
+      self.postMessage({ type: "JOIN_ERROR", message: err.message })
+    }
     return;
   }
 };
