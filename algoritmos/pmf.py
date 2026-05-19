@@ -3,7 +3,6 @@
 import os
 import numpy as np
 import pandas as pd
-from scipy import sparse
 
 class PMFRecommender:
     """
@@ -127,34 +126,67 @@ class PMFRecommender:
         return float(pred)
 
     def evaluate_predictions(self, R_test):
-        """Devuelve un DataFrame con las valoraciones reales y predichas para el conjunto de test."""
-        coo = R_test.tocoo()
-        rows = coo.row.astype(int)
-        cols = coo.col.astype(int)
-        ratings = coo.data.astype('float32')
-        preds = self.mu + self.bu[rows] + self.bi[cols] + np.sum(self.P[rows] * self.Q[cols], axis=1)
+        """
+        Genera un DataFrame con valoraciones reales y predichas del conjunto de test.
+        """
+        R_coo = R_test.tocoo()
+
+        users = R_coo.row.astype(int)
+        items = R_coo.col.astype(int)
+        ratings = R_coo.data.astype("float32")
+
+        preds = (
+            self.mu
+            + self.bu[users]
+            + self.bi[items]
+            + np.sum(self.P[users] * self.Q[items], axis=1)
+        )
+
         preds = np.clip(preds, self.R_MIN, self.R_MAX)
-        return pd.DataFrame({
-            "user_id": rows,
-            "anime_id": cols,
+
+        df_preds = pd.DataFrame({
+            "user_id": users,
+            "anime_id": items,
             "rating_real": ratings,
             "rating_predicho": np.round(preds, 2)
         })
 
+        df_preds["Diferencia_Absoluta"] = np.abs(
+            df_preds["rating_real"] - df_preds["rating_predicho"]
+        )
+
+        return df_preds
+
     def recommend(self, user_id, df_train, top_n=10):
-        """Recomienda ítems no valorados previamente por el usuario, ordenados por la predicción."""
+        """
+        Recomienda animes no valorados previamente por el usuario.
+        Calcula todas las predicciones de forma vectorizada.
+        """
         if user_id < 0 or user_id >= self.n_users:
             return pd.DataFrame()
-        valorados = set(df_train[df_train["user_id"] == user_id]["anime_id"].values)
-        recomendaciones = []
-        for i in range(self.n_items):
-            if i not in valorados:
-                pred = self.predict(user_id, i)
-                if pred is not None:
-                    recomendaciones.append({"anime_id": i, "predicted_rating": round(pred, 2)})
-        recomendaciones = sorted(recomendaciones, key=lambda x: x["predicted_rating"], reverse=True)
-        return pd.DataFrame(recomendaciones[:top_n])
 
+        animes_valorados = set(
+            df_train[df_train["user_id"] == user_id]["anime_id"].values
+        )
+
+        scores = (
+            self.mu
+            + self.bu[user_id]
+            + self.bi
+            + np.dot(self.Q, self.P[user_id])
+        )
+
+        scores = np.clip(scores, self.R_MIN, self.R_MAX)
+
+        for anime_id in animes_valorados:
+            scores[anime_id] = -np.inf
+
+        top_items = np.argsort(scores)[::-1][:top_n]
+
+        return pd.DataFrame({
+            "anime_id": top_items,
+            "predicted_rating": np.round(scores[top_items], 2)
+        })
 
 def run_pmf(
     R_train_sparse,
@@ -170,22 +202,29 @@ def run_pmf(
     random_state=42,
     results_file="results/resultados_pmf.csv",
     preds_file="results/predicciones_pmf.csv",
-    force_recompute=False
+    force_recompute=False,
+    save_to_disk=True
 ):
     """
     Crea, entrena y evalúa un modelo PMF.
 
-    Si los resultados ya existen y no se fuerza el recálculo,
-    se cargan desde disco.
-
     Devuelve:
         df_results, pmf, best_rmse, df_preds
+
+    Si save_to_disk=False, no guarda archivos desde esta función.
+    Esto es útil cuando queremos guardar todos los experimentos juntos
+    desde el main.ipynb.
     """
 
-    os.makedirs(os.path.dirname(results_file), exist_ok=True)
+    if save_to_disk:
+        os.makedirs(os.path.dirname(results_file), exist_ok=True)
 
-    # Si ya existen resultados y no queremos recalcular, los cargamos
-    if os.path.exists(results_file) and os.path.exists(preds_file) and not force_recompute:
+    if (
+        save_to_disk
+        and os.path.exists(results_file)
+        and os.path.exists(preds_file)
+        and not force_recompute
+    ):
         print(f"Cargando resultados PMF guardados previamente desde {results_file}...")
 
         df_results = pd.read_csv(results_file)
@@ -234,14 +273,15 @@ def run_pmf(
         "test_RMSE": history["test_rmse"]
     })
 
-    df_results.to_csv(results_file, index=False)
-
-    print(f"Resultados PMF guardados en '{results_file}'")
-
     df_preds = pmf.evaluate_predictions(R_test_sparse)
-    df_preds.to_csv(preds_file, index=False)
 
-    print(f"Predicciones PMF guardadas en '{preds_file}'")
+    if save_to_disk:
+        df_results.to_csv(results_file, index=False)
+        df_preds.to_csv(preds_file, index=False)
+
+        print(f"Resultados PMF guardados en '{results_file}'")
+        print(f"Predicciones PMF guardadas en '{preds_file}'")
+
     print(f"Mejor RMSE test: {best_rmse:.4f}")
 
     return df_results, pmf, best_rmse, df_preds
