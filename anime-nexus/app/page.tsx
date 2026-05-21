@@ -16,6 +16,8 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import Script from "next/script";
 import { ArrowRight, GitBranch, Layers, Brain, Cpu } from "lucide-react";
+import { ModelComparisonTable } from "@/components/ModelComparisonTable";
+import type { ModelMetric } from "@/components/ModelComparisonTable";
 
 // ─── Declaración de Tipos para TypeScript ─────────────────────
 declare global {
@@ -26,58 +28,14 @@ declare global {
   }
 }
 
-// ─── Metric data from notebook evaluation ─────────────────────
-const METRICS = [
-  {
-    model:    "KNN",
-    fullName: "K-Nearest Neighbours",
-    color:    "#00f2ff",
-    rmse:     "1.3391",
-    mae:      "1.0017",
-    coverage: "100%",
-    k:        "k = 10",
-    note:     "Item-based cosine similarity",
-  },
-  {
-    model:    "PMF",
-    fullName: "Probabilistic MF",
-    color:    "#fff000",
-    rmse:     "1.102220",
-    mae:      "0.7312",
-    coverage: "100%",
-    k:        "n_factors=50, lr=0.005, reg=0.05, epochs=30, patience=5",
-    note:     "Gaussian latent factors",
-  },
-  {
-    model:    "BMF",
-    fullName: "Bernoulli MF",
-    color:    "#ff6b00",
-    rmse:     "1.4372",
-    mae:      "0.9900",
-    coverage: "100%",
-    k:        "K = 10",
-    note:     "Bernoulli binary factors",
-  },
-  {
-    model:    "GMF",
-    fullName: "Generalised MF (NCF)",
-    color:    "#ff00ff",
-    rmse:     "1.2344",
-    mae:      "0.9329",
-    coverage: "100%",
-    k:        "latent_dim=60",
-    note:     "Element-wise product",
-  },
-  {
-    model:    "MLP",
-    fullName: "Multi-Layer Perceptron (NCF)",
-    color:    "#c084fc",
-    rmse:     "1.2149",
-    mae:      "0.9188",
-    coverage: "100%",
-    k:        "latent_dim=64, lr= 0.0096",
-    note:     "Deep concat embedding",
-  },
+// ─── Fallback (mostrado mientras carga la API) ──────────────────
+// La fuente de verdad real es results/models_summary.csv (cargada via /api/models).
+const METRICS_FALLBACK: ModelMetric[] = [
+  { model: "KNN", full_name: "K-Nearest Neighbours",          paradigm: "Memory-based CF",      color: "#00f2ff", rmse: 1.3391, mae: 1.0017, precision10: null,   ndcg10: null,   coverage: 100, best_params: "k=10, cosine similarity" },
+  { model: "PMF", full_name: "Probabilistic MF",               paradigm: "Model-based CF",       color: "#fff000", rmse: 1.1022, mae: 0.7312, precision10: null,   ndcg10: null,   coverage: 100, best_params: "n_factors=50, lr=0.005" },
+  { model: "BMF", full_name: "Bernoulli MF",                   paradigm: "Model-based CF",       color: "#ff6b00", rmse: 1.4372, mae: 0.9900, precision10: null,   ndcg10: null,   coverage: 100, best_params: "K=10 scores, d=20" },
+  { model: "GMF", full_name: "Generalised MF (NCF)",           paradigm: "Neural CF – linear",   color: "#ff00ff", rmse: 1.2204, mae: 0.9292, precision10: 0.955,  ndcg10: 0.976,  coverage: 100, best_params: "latent_dim=60, lr=0.00284" },
+  { model: "MLP", full_name: "Multi-Layer Perceptron (NCF)",   paradigm: "Neural CF – non-linear",color: "#c084fc", rmse: 1.1985, mae: 0.9049, precision10: 0.9545, ndcg10: 0.9773, coverage: 100, best_params: "latent_dim=64, lr=0.00961" },
 ];
 
 // ─── Formula cards (LaTeX Convertido y Optimizado) ─────────────
@@ -173,6 +131,28 @@ const fadeUp = (i: number): {
 // ─── Page ─────────────────────────────────────────────────────
 export default function HomePage() {
   const [katexReady, setKatexReady] = useState(false);
+
+  // ─ Datos de modelos: cargados desde /api/models (models_summary.csv) ────
+  const [metrics, setMetrics] = useState<ModelMetric[]>(METRICS_FALLBACK);
+  const [metricsLoading, setMetricsLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/models")
+      .then((r) => r.json())
+      .then((data: ModelMetric[]) => {
+        if (Array.isArray(data) && data.length > 0) setMetrics(data);
+      })
+      .catch(() => { /* mantenemos el fallback */ })
+      .finally(() => setMetricsLoading(false));
+  }, []);
+
+  // ─ Valores derivados para las stat-cards ───────────────────────────
+  const bestRmse = metrics.reduce((a, b) => a.rmse < b.rmse ? a : b);
+  const bestMae  = metrics.reduce((a, b) => a.mae  < b.mae  ? a : b);
+  const withPrec = metrics.filter((m): m is ModelMetric & { precision10: number } => m.precision10 !== null);
+  const withNdcg = metrics.filter((m): m is ModelMetric & { ndcg10: number }      => m.ndcg10      !== null);
+  const bestPrec = withPrec.length ? withPrec.reduce((a, b) => a.precision10 > b.precision10 ? a : b) : null;
+  const bestNdcg = withNdcg.length ? withNdcg.reduce((a, b) => a.ndcg10      > b.ndcg10      ? a : b) : null;
 
   // Asegura el renderizado en caso de que KaTeX ya estuviese pre-cargado globalmente
   useEffect(() => {
@@ -283,76 +263,67 @@ export default function HomePage() {
             Model Comparison
           </h2>
           <p className="mt-2 font-body text-xs text-nt-muted max-w-xl">
-            Evaluated on a 80/20 train-test split of the MAL rating dataset.
-            Lower RMSE/MAE = better accuracy. Coverage = % of test users with predictions.
+            Evaluated on a stratified 80/20 train-test split of the MAL rating dataset.
+            RMSE / MAE measure prediction accuracy. Precision@10 and nDCG@10 measure
+            ranking quality (full test-set protocol, relevance threshold ≥ 7.0).
           </p>
         </motion.div>
 
-        <motion.div {...fadeUp(1)} className="overflow-x-auto">
-          <table className="w-full border-collapse text-xs font-mono">
-            <thead>
-              <tr className="border-b border-nt-border">
-                <th className="py-3 px-4 text-left text-2xs uppercase tracking-widest text-nt-muted font-normal">Model</th>
-                <th className="py-3 px-4 text-right text-2xs uppercase tracking-widest text-nt-muted font-normal">RMSE ↓</th>
-                <th className="py-3 px-4 text-right text-2xs uppercase tracking-widest text-nt-muted font-normal">MAE ↓</th>
-                <th className="py-3 px-4 text-right text-2xs uppercase tracking-widest text-nt-muted font-normal">Coverage ↑</th>
-                <th className="py-3 px-4 text-left  text-2xs uppercase tracking-widest text-nt-muted font-normal">Params</th>
-                <th className="py-3 px-4 text-left  text-2xs uppercase tracking-widest text-nt-muted font-normal">Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {METRICS.map((m, i) => (
-                <motion.tr
-                  key={m.model}
-                  {...fadeUp(i)}
-                  className="border-b border-nt-border/40 hover:bg-white/[0.02] transition-colors"
-                >
-                  <td className="py-3 px-4">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ background: m.color, boxShadow: `0 0 6px 2px ${m.color}88` }}
-                      />
-                      <div>
-                        <span className="font-bold" style={{ color: m.color }}>{m.model}</span>
-                        <span className="text-nt-muted ml-2 hidden sm:inline text-2xs">{m.fullName}</span>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 text-right" style={{ color: m.color }}>{m.rmse}</td>
-                  <td className="py-3 px-4 text-right" style={{ color: m.color }}>{m.mae}</td>
-                  <td className="py-3 px-4 text-right text-nt-muted">{m.coverage}</td>
-                  <td className="py-3 px-4 text-nt-muted text-2xs">{m.k}</td>
-                  <td className="py-3 px-4 text-nt-muted text-2xs">{m.note}</td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Tabla completa con ranking metrics */}
+        <motion.div {...fadeUp(1)} className={metricsLoading ? "opacity-50" : ""}>
+          <ModelComparisonTable metrics={metrics} />
         </motion.div>
 
-        {/* RMSE visual bars */}
-        <motion.div {...fadeUp(6)} className="mt-6 grid grid-cols-1 sm:grid-cols-5 gap-3">
-          {METRICS.map((m) => {
-            const best  = Math.min(...METRICS.map(x => Number(x.rmse)));
-            const worst = Math.max(...METRICS.map(x => Number(x.rmse)));
-            const pct   = 100 - ((Number(m.rmse) - best) / (worst - best)) * 100;
-            return (
-              <div key={m.model} className="glass-panel rounded-sm border border-nt-border p-3 flex flex-col gap-2">
-                <span className="font-display text-2xs uppercase" style={{ color: m.color }}>{m.model}</span>
-                <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full rounded-full"
-                    style={{ background: m.color }}
-                    initial={{ width: 0 }}
-                    whileInView={{ width: `${pct}%` }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                  />
-                </div>
-                <span className="font-mono text-2xs text-nt-muted">RMSE {m.rmse}</span>
-              </div>
-            );
-          })}
+        {/* Mini stat-cards — calculadas dinámicamente desde el CSV ────────── */}
+        <motion.div {...fadeUp(2)} className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            {
+              label: "Best RMSE",
+              value: bestRmse.rmse.toFixed(4),
+              model: bestRmse.model,
+              color: bestRmse.color,
+              sub:   "prediction",
+            },
+            {
+              label: "Best MAE",
+              value: bestMae.mae.toFixed(4),
+              model: bestMae.model,
+              color: bestMae.color,
+              sub:   "prediction",
+            },
+            {
+              label: "Best P@10",
+              value: bestPrec ? (bestPrec.precision10 * 100).toFixed(1) + "%" : "—",
+              model: bestPrec?.model ?? "—",
+              color: bestPrec?.color ?? "#ffffff",
+              sub:   "ranking",
+            },
+            {
+              label: "Best nDCG@10",
+              value: bestNdcg ? (bestNdcg.ndcg10 * 100).toFixed(1) + "%" : "—",
+              model: bestNdcg?.model ?? "—",
+              color: bestNdcg?.color ?? "#ffffff",
+              sub:   "ranking",
+            },
+          ].map((card, i) => (
+            <motion.div
+              key={card.label}
+              {...fadeUp(i)}
+              className="glass-panel rounded-sm border border-nt-border p-4 flex flex-col gap-1"
+              style={{ borderColor: card.color + "33" }}
+              whileHover={{ borderColor: card.color + "88", boxShadow: `0 0 18px 2px ${card.color}18` }}
+              transition={{ duration: 0.15 }}
+            >
+              <span className="font-display text-[10px] uppercase tracking-widest text-white/30">{card.label}</span>
+              <span
+                className="font-display text-2xl font-black"
+                style={{ color: card.color, textShadow: `0 0 12px ${card.color}66` }}
+              >
+                {card.value}
+              </span>
+              <span className="font-mono text-[10px] text-white/30">{card.model} · {card.sub}</span>
+            </motion.div>
+          ))}
         </motion.div>
       </section>
 
