@@ -45,7 +45,7 @@ class KNNRecommender:
         if u not in self.ratings_train or v not in self.ratings_train:
             return None
         items_comunes = self.items_por_usuario_train[u].intersection(self.items_por_usuario_train[v])
-        if len(items_comunes) == 0:
+        if len(items_comunes) <2:
             return None
             
         media_u = self.user_means_cache[u]
@@ -116,14 +116,16 @@ class KNNRecommender:
             return None
         
         pred = media_u + num / denom
-        return float(np.clip(pred, self.R_MIN, self.R_MAX))
+        pred = max(self.R_MIN, min(pred, self.R_MAX))
+        return float(pred)
 
     def evaluate(self, test_df, k, sim_metric='jmsd'):
         errores_cuadraticos = []
         errores_absolutos = []
-        predicciones_log = []
         no_predecibles = 0
         total_test = len(test_df)
+
+        predicciones_lista = []
         
         for row in test_df.itertuples(index=False):
             u = row.user_id
@@ -137,22 +139,50 @@ class KNNRecommender:
             else:
                 errores_cuadraticos.append((prediccion - rating_real) ** 2)
                 errores_absolutos.append(abs(prediccion - rating_real))
-                predicciones_log.append({
+                predicciones_lista.append({
                     'user_id': u,
                     'anime_id': i,
                     'rating_real': rating_real,
-                    'rating_predicho': round(prediccion, 2)
+                    'rating_predicho': prediccion
                 })
                 
         if len(errores_cuadraticos) == 0:
-            return float('inf'), float('inf'), 0.0, pd.DataFrame()
+            return float('inf'), float('inf'), 0.0, 0.0, 0.0, pd.DataFrame() 
+
             
         rmse = math.sqrt(sum(errores_cuadraticos) / len(errores_cuadraticos))
-        mae = sum(errores_absolutos) / len(errores_absolutos)
+        mae = sum(errores_absolutos) / len(errores_absolutos) if errores_absolutos else float("inf")
         cobertura = (total_test - no_predecibles) / total_test * 100
         
-        df_preds = pd.DataFrame(predicciones_log)
-        return rmse, mae, cobertura, df_preds
+        df_preds = pd.DataFrame(predicciones_lista)
+
+        precisions= []
+        ndcgs = []
+        threshold = 7.0
+
+        if not df_preds.empty:
+            for _, grupo in df_preds.groupby("user_id"):
+                top_k = grupo.sort_values("rating_predicho", ascending=False).head(k)
+                
+                # precision@10
+                hits = sum(top_k["rating_real"] >= threshold)
+                precisions.append(hits/k)
+
+                # ndcg@10
+                dcg = 0
+                for pos, r_real in enumerate(top_k["rating_real"], start=1):
+                    dcg += (2**r_real - 1) / np.log2(pos + 1)
+                ideal = grupo.sort_values("rating_real", ascending=False).head(k)
+                idcg = 0
+                for pos, r_real in enumerate(ideal["rating_real"], start=1):
+                    idcg += (2**r_real - 1) / np.log2(pos + 1)
+                
+                ndcgs.append(dcg / idcg if idcg > 0 else 0)
+        
+        precision_at_10 = np.mean(precisions) if precisions else 0.0
+        ndcg_at_10 = np.mean(ndcgs) if ndcgs else 0.0
+
+        return rmse, mae, cobertura, precision_at_10, ndcg_at_10, df_preds
 
 
 def generar_resultados_knn_frontend(df_train, n_neighbors=6, output_file='results/resultados_knn.csv'):
@@ -235,9 +265,9 @@ def run_knn(df_train, df_test, k_values=[5, 10, 20, 30, 50], sim_metric='jmsd', 
         print(f">> Generando predicciones de muestra para el mejor K (k = {best_k}) a partir del test...")
         
         # Evaluamos rápidamente el test sample solo con el best_k para obtener la muestra de predicciones
-        _, _, _, best_df_preds = knn.evaluate(df_test, best_k, sim_metric)
+        rmse_k, mae_k, cobertura_k, p_at_10, ndcg_at_10, df_preds_k = knn.evaluate(df_test, best_k, sim_metric)
         
-        return df_results, knn, best_k, best_df_preds
+        return df_results, knn, best_k, df_preds_k, p_at_10, ndcg_at_10
 
     # Si no existe el archivo o forzamos recalcular
     print(f">> Evaluando KNN con métrica: {sim_metric}")
@@ -245,27 +275,33 @@ def run_knn(df_train, df_test, k_values=[5, 10, 20, 30, 50], sim_metric='jmsd', 
     best_k = None
     best_df_preds = None
     best_rmse = float('inf')
+    best_p_at_10 = 0.0
+    best_ndcg_at_10 = 0.0
     
     for k in k_values:
-        rmse_k, mae_k, cobertura_k, df_preds_k = knn.evaluate(df_test, k, sim_metric)
+        rmse_k, mae_k, cobertura_k, p_at_10, ndcg_at_10, df_preds_k = knn.evaluate(df_test, k, sim_metric)
         results.append({
             'K': k, 
             'RMSE': rmse_k,
             'MAE': mae_k,
-            'Cobertura': cobertura_k
+            'Cobertura': cobertura_k,
+            'Precision@10': p_at_10,
+            'NDCG@10': ndcg_at_10
         })
-        print(f"  K={k:3d} | RMSE: {rmse_k:.4f} | MAE: {mae_k:.4f} | Cobertura: {cobertura_k:.2f}%")
+        print(f"  K={k:3d} | RMSE: {rmse_k:.4f} | MAE: {mae_k:.4f} | Cobertura: {cobertura_k:.2f}% | P@10: {p_at_10:.4f} | NDCG@10: {ndcg_at_10:.4f}")
         
         if rmse_k < best_rmse:
             best_rmse = rmse_k
             best_k = k
             best_df_preds = df_preds_k
+            best_p_at_10 = p_at_10
+            best_ndcg_at_10 = ndcg_at_10
             
     df_results = pd.DataFrame(results)
     df_results.to_csv(results_file, index=False)
     print(f"Resultados guardados de búsqueda en '{results_file}'")
     
-    return df_results, knn, best_k, best_df_preds
+    return df_results, knn, best_k, best_df_preds, best_p_at_10, best_ndcg_at_10
 
 if __name__ == "__main__":
     pass
