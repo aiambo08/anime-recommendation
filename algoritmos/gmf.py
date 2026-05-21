@@ -10,7 +10,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 # Importamos el protocolo de evaluación unificado para que Precision@K y nDCG@K
 # sean comparables entre todos los modelos (KNN, PMF, BMF, GMF, MLP).
-from algoritmos.ranking_eval import evaluate_ranking_at_k
+from ranking_eval import evaluate_ranking_at_k
 
 # =====================================================================
 # 1. ARQUITECTURA DE LA RED NEURONAL (GMF Nivel PyTorch)
