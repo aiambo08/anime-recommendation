@@ -1,5 +1,3 @@
-# pmf.py
-
 import os
 import numpy as np
 import pandas as pd
@@ -224,6 +222,7 @@ def run_pmf(
         save_to_disk
         and os.path.exists(results_file)
         and os.path.exists(preds_file)
+        and os.path.exists(weights_file)
         and not force_recompute
     ):
         print(f"Cargando resultados PMF guardados previamente desde {results_file}...")
