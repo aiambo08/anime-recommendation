@@ -8,6 +8,10 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+# Importamos el protocolo de evaluación unificado para que Precision@K y nDCG@K
+# sean comparables entre todos los modelos (KNN, PMF, BMF, GMF, MLP).
+from algoritmos.ranking_eval import evaluate_ranking_at_k
+
 # =====================================================================
 # 1. ARQUITECTURA DE LA RED NEURONAL (GMF Nivel PyTorch)
 # =====================================================================
@@ -84,22 +88,85 @@ class GMFRecommender:
             epoch_loss = running_loss.item() / len(loader)
             print(f"  Época {epoch+1:2d}/{epochs} | Train MSE: {epoch_loss:.4f}")
 
+    def predict_batch(self, users: np.ndarray, items: np.ndarray) -> np.ndarray:
+        """
+        Predicción vectorizada sobre arrays de usuarios e ítems.
+        Devuelve scores recortados en [1, 10] listos para evaluate_ranking_at_k.
+        """
+        self.model.eval()
+        with torch.no_grad():
+            u_t = torch.tensor(users, dtype=torch.long).to(self.device)
+            i_t = torch.tensor(items, dtype=torch.long).to(self.device)
+            preds = self.model(u_t, i_t).cpu().numpy()
+        return np.clip(preds, 1.0, 10.0).astype(np.float32)
+
     def evaluate(self, df_test):
         """
-        Evalúa el modelo en el conjunto de test y devuelve las métricas.
+        Evalúa el modelo en el conjunto de test (RMSE, MAE, Cobertura).
+        Para métricas de ranking usa evaluate_ranking().
         """
         self.model.eval()
         with torch.no_grad():
             users_test = torch.tensor(df_test['user_id'].values, dtype=torch.long).to(self.device)
             items_test = torch.tensor(df_test['anime_id'].values, dtype=torch.long).to(self.device)
             preds = self.model(users_test, items_test).cpu().numpy()
-            
+
         ratings_reales = df_test['rating'].values
         mae = mean_absolute_error(ratings_reales, preds)
         rmse = math.sqrt(mean_squared_error(ratings_reales, preds))
-        
-        cobertura = 100.0 
+
+        cobertura = 100.0
         return rmse, mae, cobertura
+
+    def evaluate_ranking(
+        self,
+        df_test: pd.DataFrame,
+        k: int = 10,
+        threshold: float = 7.0,
+        n_users_sample: int = None,
+        random_state: int = 42
+    ):
+        """
+        Calcula Precision@K y nDCG@K sobre el test set usando el protocolo
+        unificado full-test-set (sin negative sampling).
+
+        Parámetros
+        ----------
+        df_test : pd.DataFrame
+            Columnas necesarias: ['user_id', 'anime_id', 'rating'].
+        k : int
+            Longitud de la lista de recomendación (default 10).
+        threshold : float
+            Rating mínimo para considerar un ítem como relevante (default 7.0).
+        n_users_sample : int o None
+            Si se especifica, evalúa sobre una muestra aleatoria de N usuarios
+            (útil para tablas de tuning donde se quiere rapidez). Si es None,
+            evalúa sobre todos los usuarios del test set.
+        random_state : int
+            Semilla para la muestra de usuarios (garantiza reproducibilidad).
+
+        Retorna
+        -------
+        precision_at_k : float
+        ndcg_at_k : float
+        """
+        if n_users_sample is not None:
+            # Seleccionamos usuarios con suficientes registros en test
+            conteo = df_test['user_id'].value_counts()
+            usuarios_validos = conteo[conteo >= k].index
+            rng = np.random.default_rng(random_state)
+            n = min(n_users_sample, len(usuarios_validos))
+            usuarios_sel = rng.choice(usuarios_validos, size=n, replace=False)
+            df_eval = df_test[df_test['user_id'].isin(usuarios_sel)].copy()
+        else:
+            df_eval = df_test
+
+        return evaluate_ranking_at_k(
+            predict_fn=self.predict_batch,
+            df_test=df_eval,
+            k=k,
+            threshold=threshold
+        )
 
 
 # =====================================================================
@@ -204,15 +271,29 @@ def run_gmf(df_train, df_test, force_recompute=False, **kwargs):
         torch.save(gmf_recommender.model.state_dict(), weights_file)
         print(f"Pesos de la red GMF guardados en {weights_file}")
         
-    # Evaluación
+    # Evaluación de error (RMSE, MAE)
     rmse, mae, cobertura = gmf_recommender.evaluate(df_test)
-    print(f">> Evaluación Final GMF | RMSE: {rmse:.4f} | MAE: {mae:.4f} | Cobertura: {cobertura:.2f}%")
-    
+    print(f">> Evaluacion Final GMF | RMSE: {rmse:.4f} | MAE: {mae:.4f} | Cobertura: {cobertura:.2f}%")
+
+    # Evaluación de ranking — protocolo full test set (muestra de 200 usuarios)
+    # n_users_sample limita el coste sin alterar la representatividad del tuning.
+    print(">> Calculando Precision@10 y nDCG@10 (muestra 200 usuarios)...")
+    p_at_10, ndcg_at_10 = gmf_recommender.evaluate_ranking(
+        df_test, k=10, threshold=7.0, n_users_sample=200
+    )
+    print(f">> Precision@10: {p_at_10:.4f} | nDCG@10: {ndcg_at_10:.4f}")
+
     # Exportación para visualización web
     if not os.path.exists(frontend_file) or force_recompute:
         generar_resultados_gmf_frontend(gmf_recommender, df_train, n_neighbors=6, output_file=frontend_file)
-        
-    return {"RMSE": rmse, "MAE": mae, "Cobertura": cobertura}, gmf_recommender
+
+    return {
+        "RMSE": rmse,
+        "MAE": mae,
+        "Cobertura": cobertura,
+        "Precision@10": p_at_10,
+        "nDCG@10": ndcg_at_10
+    }, gmf_recommender
 
 if __name__ == "__main__":
     pass

@@ -202,6 +202,7 @@ def run_pmf(
     random_state=42,
     results_file="results/resultados_pmf.csv",
     preds_file="results/predicciones_pmf.csv",
+    weights_file="results/PMF_weights.npz",
     force_recompute=False,
     save_to_disk=True
 ):
@@ -232,9 +233,7 @@ def run_pmf(
 
         best_rmse = df_results["test_RMSE"].min()
 
-        print(">> Inicializando modelo PMF sin reentrenar...")
-        print("Aviso: el modelo devuelto no contiene pesos entrenados, solo resultados y predicciones guardadas.")
-
+        # Reconstruir el modelo con los pesos guardados (si existen)
         pmf = PMFRecommender(
             n_users=n_users,
             n_items=n_items,
@@ -243,6 +242,19 @@ def run_pmf(
             reg=reg,
             random_state=random_state
         )
+
+        if save_to_disk and os.path.exists(weights_file):
+            print(f">> Restaurando pesos entrenados desde {weights_file}...")
+            data = np.load(weights_file)
+            pmf.P  = data['P'].astype('float32')
+            pmf.Q  = data['Q'].astype('float32')
+            pmf.bu = data['bu'].astype('float32')
+            pmf.bi = data['bi'].astype('float32')
+            pmf.mu = float(data['mu'])
+            print(">> Modelo PMF listo para predict() y recommend().")
+        else:
+            print("AVISO: No se encontró el archivo de pesos PMF. El modelo no está entrenado.")
+            print(f"       Ejecuta de nuevo con force_recompute=True o asegúrate de que exista {weights_file}")
 
         return df_results, pmf, best_rmse, df_preds
 
@@ -278,9 +290,18 @@ def run_pmf(
     if save_to_disk:
         df_results.to_csv(results_file, index=False)
         df_preds.to_csv(preds_file, index=False)
-
+        # Guardar pesos del mejor modelo para restauración posterior
+        np.savez(
+            weights_file,
+            P=pmf.P,
+            Q=pmf.Q,
+            bu=pmf.bu,
+            bi=pmf.bi,
+            mu=np.array(pmf.mu, dtype='float32')
+        )
         print(f"Resultados PMF guardados en '{results_file}'")
         print(f"Predicciones PMF guardadas en '{preds_file}'")
+        print(f"Pesos PMF guardados en '{weights_file}'")
 
     print(f"Mejor RMSE test: {best_rmse:.4f}")
 
